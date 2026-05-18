@@ -1,7 +1,16 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5001";
+/** Baked in at image build from CLUSTER_ID (see Containerfile / Makefile). */
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:5001").replace(
+  /\/$/,
+  "",
+);
+
+function apiUrl(path) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${normalized}`;
+}
 
 export async function apiGet(path) {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await fetch(apiUrl(path));
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
@@ -9,7 +18,7 @@ export async function apiGet(path) {
 }
 
 export async function apiPost(path, payload) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -22,7 +31,7 @@ export async function apiPost(path, payload) {
 
 /** Multipart POST (file uploads). Do not set Content-Type so the browser sets the boundary. */
 export async function apiPostFormData(path, formData) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     body: formData,
   });

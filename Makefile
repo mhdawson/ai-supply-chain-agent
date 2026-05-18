@@ -7,18 +7,15 @@ REGISTRY        ?= quay.io/rh-ai-quickstart
 BACKEND_IMAGE   ?= $(REGISTRY)/ai-supply-chain-agent-backend
 INGEST_IMAGE    ?= $(REGISTRY)/ai-supply-chain-agent-ingestion
 FRONTEND_IMAGE  ?= $(REGISTRY)/ai-supply-chain-agent-frontend
-BACKEND_TAG     ?= testing		
-INGEST_TAG      ?= testing
-FRONTEND_TAG    ?= testing
+BACKEND_TAG     ?= latest		
+INGEST_TAG      ?= latest
+FRONTEND_TAG    ?= latest
 
 # --- Helm Config ---
 HELM_CHART     ?= ./helm
 HELM_RELEASE   ?= supply-chain-dashboard
 NAMESPACE      ?= supply-chain-dashboard
 VALUES_FILE    ?= $(HELM_CHART)/values.yaml
-
-# --- Build Args ---
-# VITE_API_BASE_URL is set to "" in the Containerfile; nginx proxies /api/ at runtime.
 
 # --- Podman build platform ---
 BUILD_PLATFORM ?= linux/amd64
@@ -76,7 +73,7 @@ help:
 	@echo "    FRONTEND_TAG       $(FRONTEND_TAG)"
 	@echo "    NAMESPACE          $(NAMESPACE)"
 	@echo "    HELM_RELEASE       $(HELM_RELEASE)"
-	@echo "    (VITE_API_BASE_URL is set to empty in Containerfile; nginx proxies /api/)"
+	@echo "    VALUES_FILE        $(VALUES_FILE)  (frontend.clusterId, frontend.openshiftAppsDomain)"
 	@echo ""
 
 # ============================================================
@@ -107,13 +104,24 @@ build-ingest:
 
 .PHONY: build-frontend
 build-frontend:
-	@echo ">>> Building frontend image: $(FRONTEND_IMAGE):$(FRONTEND_TAG)"
+	@set -eu; \
+	cluster_id=$$(awk '/^frontend:/{f=1} f && /^  clusterId:/{gsub(/"/,""); print $$2; exit}' $(VALUES_FILE)); \
+	apps_domain=$$(awk '/^frontend:/{f=1} f && /^  openshiftAppsDomain:/{gsub(/"/,""); print $$2; exit}' $(VALUES_FILE)); \
+	test -n "$$cluster_id" || { echo "ERROR: set frontend.clusterId in $(VALUES_FILE)"; exit 1; }; \
+	test -n "$$apps_domain" || { echo "ERROR: set frontend.openshiftAppsDomain in $(VALUES_FILE)"; exit 1; }; \
+	api_url="https://$(HELM_RELEASE)-backend-$(NAMESPACE).apps.$${cluster_id}.$${apps_domain}"; \
+	echo ">>> Building frontend image: $(FRONTEND_IMAGE):$(FRONTEND_TAG)"; \
+	echo ">>> VITE_API_BASE_URL=$${api_url} (from $(VALUES_FILE))"; \
 	podman build \
 		--platform $(BUILD_PLATFORM) \
+		--build-arg CLUSTER_ID=$${cluster_id} \
+		--build-arg RELEASE_NAME=$(HELM_RELEASE) \
+		--build-arg NAMESPACE=$(NAMESPACE) \
+		--build-arg OPENSHIFT_APPS_DOMAIN=$${apps_domain} \
 		-f ./app/frontend/Containerfile \
 		-t $(FRONTEND_IMAGE):$(FRONTEND_TAG) \
-		./app/frontend
-	@echo ">>> Frontend image built successfully."
+		./app/frontend; \
+	echo ">>> Frontend image built successfully."
 
 # ============================================================
 # Push targets
