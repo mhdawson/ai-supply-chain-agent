@@ -123,13 +123,6 @@ make build-backend build-ingest build-frontend
 make push-backend push-ingest push-frontend
 ```
 
-If deploying Perspective run 
-
-```bash
-make build-perspective
-make push-perspective
-```
-
 Override tags or registry as needed, e.g. `make build-backend BACKEND_TAG=v1 REGISTRY=quay.io/myorg`.
 
 ### 4. Install Helm dependencies
@@ -264,6 +257,7 @@ helm uninstall supply-chain-perspective --namespace supply-chain-dashboard
 
 ## References
 
+- [What to expect after deployment?](./docs/WHAT_TO_EXPECT.md)]
 - [Llama Stack documentation](https://llama-stack.readthedocs.io)
 - [LangChain PGVector integration](https://python.langchain.com/docs/integrations/vectorstores/pgvector/)
 - [React Leaflet](https://react-leaflet.js.org/)
