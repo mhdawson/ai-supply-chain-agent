@@ -21,6 +21,7 @@ Key capabilities:
 - **Scenario simulation**: Select a disruption scenario (e.g. port strike, geopolitical tension) and optionally enable route optimization; the backend updates dashboard state and returns an AI-generated analysis.
 - **RAG chatbot**: A chat sidebar sends questions to a Flask API that performs similarity search over PGVector, builds a context-augmented prompt, and calls the Llama Stack LLM.
 - **Ingestion pipeline**: A Helm post-install job chunks `.txt` knowledge-base documents and embeds them into PGVector using the configured embedding model.
+- **OpenShift Console perspective** (optional): A dynamic console plugin in `app/supply-chain-perspective/` adds a dedicated **Supply Chain** perspective in the OpenShift web console with the same dashboard, simulations, and knowledge-base workflows integrated into the cluster UI.
 
 ### Architecture diagrams
 
@@ -44,16 +45,39 @@ Key capabilities:
 | OpenShift | 4.16+ |
 | OpenShift AI | 2.13+ |
 | Helm | 3.14+ |
-| Llama Stack | compatible with `llama-stack` Helm chart included in `chart/` |
+| Llama Stack | compatible with `llama-stack` subchart in `helm/` (from [ai-architecture-charts](https://github.com/rh-ai-quickstart/ai-architecture-charts)) |
 | Python | 3.12 |
-| Node.js | 22 (frontend build only) |
+| Node.js | 22 (frontend and perspective plugin builds) |
+| Yarn | 4.13+ (perspective plugin build; see `packageManager` in `app/supply-chain-perspective/package.json`) |
+| OpenShift Console | 4.12+ cluster with dynamic plugins enabled (`ConsolePlugin` CRD v1) |
+| `oc` CLI | Required to install the perspective Helm chart and patch the console operator |
+
+The perspective plugin image is built for **linux/amd64** (see `app/supply-chain-perspective/Containerfile`). At runtime it expects the **backend API** from the main Helm deployment (or a build-time override via `SUPPLY_CHAIN_API_BASE_URL`).
 
 ### Required user permissions
 
-- **OpenShift cluster-admin** role (or namespace admin with ability to create Routes, PersistentVolumeClaims, and Jobs) is required to deploy the Helm chart.
-- A standard user account is sufficient to interact with the deployed dashboard.
+**Application (backend, frontend, PGVector, Llama Stack)**
+
+- **OpenShift cluster-admin** role, or namespace admin with permission to create Routes, PersistentVolumeClaims, and Jobs, is required to deploy the main Helm chart.
+- A standard user account is sufficient to interact with the deployed dashboard via its Route.
+
+**OpenShift Console perspective** (`app/supply-chain-perspective/`)
+
+- **Cluster-admin is required.** Installing the perspective registers a `ConsolePlugin` custom resource and enables the plugin in the cluster-wide `consoles.operator.openshift.io` configuration. Namespace-scoped admin is not sufficient.
+- After installation, any user who can access the OpenShift Console can use the Supply Chain perspective (subject to your console RBAC).
 
 ## Deploy
+
+Defaults used below (overridable on `make`, e.g. `make helm-install NAMESPACE=my-ns`):
+
+| Setting | Default |
+|---------|---------|
+| Helm chart | `./helm` |
+| Release name | `supply-chain-dashboard` |
+| Namespace | `supply-chain-dashboard` |
+| Values file | `helm/values.yaml` |
+
+Run `make help` for the full target list.
 
 ### 1. Clone the repository
 
@@ -62,13 +86,7 @@ git clone https://github.com/rh-aiservices-bu/ai-supply-chain-agent.git
 cd ai-supply-chain-agent
 ```
 
-### 2. Configure values
-
-Copy and edit the Helm values file:
-
-```bash
-cp chart/values.yaml chart/my-values.yaml
-```
+### 2. Edit values
 
 Set at minimum:
 
@@ -76,47 +94,170 @@ Set at minimum:
 |-------|-------------|
 | `backend.image.repository` / `tag` | Backend container image |
 | `frontend.image.repository` / `tag` | Frontend container image |
-| `llama_stack.model` | Llama Stack model identifier |
-| `embed_model` | Embedding model identifier |
-| `pgvector.*` | PostgreSQL connection details |
+| `frontend.clusterId` / `frontend.openshiftAppsDomain` | Cluster DNS used when building the frontend (`make build-frontend`) |
+| `ingest.image.repository` / `tag` | Ingestion job image |
+| `backend.env.LLAMA_STACK_MODEL` / `EMBED_MODEL` | LLM and embedding model identifiers |
+| `pgvector.secret.*` | PostgreSQL credentials (or use subchart defaults for demos) |
+| `llm-service.secret.hf_token` | Hugging Face token when pulling gated models |
 
-### 3. Deploy with Helm
+Point image repositories at a registry you can push to (defaults use `quay.io/rh-ai-quickstart/...`).
 
-```bash
-helm upgrade --install ai-supply-chain-agent ./chart \
-  -f chart/my-values.yaml \
-  --namespace ai-supply-chain \
-  --create-namespace
-```
+### 3. Build and push images
 
-The Helm chart deploys:
-- **Backend** — Flask API (port 5001)
-- **Frontend** — React SPA served by nginx (port 8080)
-- **PGVector** — PostgreSQL + pgvector extension
-- **Llama Stack** — LLM inference server
-- **Ingest Job** — post-install Helm hook that loads the knowledge base into PGVector
-
-### 4. Access the dashboard
-
-After all pods are running, retrieve the frontend Route:
+Build all application images (reads `frontend.clusterId` and `frontend.openshiftAppsDomain` from your values file for the frontend API URL):
 
 ```bash
-oc get route frontend -n ai-supply-chain
+make build
 ```
 
-Open the displayed URL in your browser.
+Or build and push in one step (after `make login` to your registry):
+
+```bash
+make release REGISTRY=quay.io/<your-org>
+```
+
+Individual images:
+
+```bash
+make build-backend build-ingest build-frontend
+make push-backend push-ingest push-frontend
+```
+
+Override tags or registry as needed, e.g. `make build-backend BACKEND_TAG=v1 REGISTRY=quay.io/myorg`.
+
+### 4. Install Helm dependencies
+
+```bash
+helm dependency update ./helm
+```
+
+**Makefile alternative:**
+
+```bash
+make helm-deps
+```
+
+### 5. Deploy the application
+
+**Helm (install or upgrade):**
+
+```bash
+helm upgrade --install supply-chain-dashboard ./helm \
+  -f helm/my-values.yaml \
+  --namespace supply-chain-dashboard \
+  --create-namespace \
+  --wait \
+  --timeout 10m
+```
+
+**Makefile alternatives** (use `VALUES_FILE=helm/my-values.yaml` when not using the default):
+
+```bash
+# First install (creates the OpenShift project if missing)
+make helm-install VALUES_FILE=helm/values.yaml
+
+# Subsequent upgrades
+make helm-upgrade VALUES_FILE=helm/values.yaml
+
+# Dry-run rendered manifests
+make helm-render VALUES_FILE=helm/values.yaml
+
+# Release status
+make helm-status
+```
+
+The umbrella chart in `helm/` deploys:
+- **Backend** — Flask API (port 5001), Route `supply-chain-dashboard-backend`
+- **Frontend** — React SPA served by nginx (port 8080), Route `supply-chain-dashboard-frontend`
+- **PGVector** — PostgreSQL + pgvector (subchart)
+- **Llama Stack** + **LLM service** — inference (subcharts)
+- **Ingest Job** — optional post-install job (`ingest.enabled`) that loads the knowledge base
+
+### 6. Access the dashboard
+
+After pods are ready:
+
+```bash
+oc get route supply-chain-dashboard-frontend -n supply-chain-dashboard
+```
+
+**Makefile alternative:**
+
+```bash
+make oc-status
+```
+
+Open the frontend Route URL in your browser.
+
+**Optional — re-run ingestion without a full Helm upgrade:**
+
+```bash
+make ingest
+make ingest-status
+make ingest-logs
+```
+
+### 7. (Optional) Deploy the OpenShift Console perspective
+
+The Supply Chain perspective is a separate console dynamic plugin. It requires **cluster-admin** to install because the Helm chart creates a `ConsolePlugin` and patches the console operator to enable the plugin cluster-wide.
+
+By default the plugin chart proxies `/api/` to the backend Service `supply-chain-dashboard-backend` in the same namespace as the main release.
+
+**Build and push the plugin image** (from the repo root):
+
+```bash
+make build-perspective push-perspective
+```
+
+**Makefile alternative** (build + push):
+
+```bash
+make release-perspective REGISTRY=quay.io/<your-org>
+```
+
+If the API is not reached via the console same-origin proxy, bake in a full backend origin at build time:
+
+```bash
+make build-perspective PERSPECTIVE_API_BASE_URL=https://supply-chain-dashboard-backend-supply-chain-dashboard.apps.<cluster>.<domain>
+```
+
+**Helm** (typically the same namespace as the dashboard so the API proxy resolves):
+
+```bash
+helm upgrade --install supply-chain-perspective \
+  ./app/supply-chain-perspective/charts/openshift-console-plugin \
+  --namespace supply-chain-dashboard \
+  --create-namespace \
+  --set plugin.image=quay.io/rh-ai-quickstart/ai-supply-chain-agent-perspective:latest
+```
+
+In the OpenShift Console, select the **Supply Chain** perspective. See `app/supply-chain-perspective/README.md` for local console development.
 
 ### Delete
 
-To remove all resources:
+**Application — Helm:**
 
 ```bash
-helm uninstall ai-supply-chain-agent --namespace ai-supply-chain
-oc delete namespace ai-supply-chain
+helm uninstall supply-chain-dashboard --namespace supply-chain-dashboard
+oc delete project supply-chain-dashboard
+```
+
+**Makefile alternative:**
+
+```bash
+make helm-uninstall
+oc delete project supply-chain-dashboard
+```
+
+**Perspective plugin (if installed):**
+
+```bash
+helm uninstall supply-chain-perspective --namespace supply-chain-dashboard
 ```
 
 ## References
 
+- [What to expect after deployment?](./docs/WHAT_TO_EXPECT.md)]
 - [Llama Stack documentation](https://llama-stack.readthedocs.io)
 - [LangChain PGVector integration](https://python.langchain.com/docs/integrations/vectorstores/pgvector/)
 - [React Leaflet](https://react-leaflet.js.org/)
@@ -129,6 +270,10 @@ oc delete namespace ai-supply-chain
 
 ```
 app/
+├── supply-chain-perspective/   # OpenShift Console dynamic plugin (Supply Chain perspective)
+│   ├── charts/openshift-console-plugin/   # Helm chart (ConsolePlugin + operator patch)
+│   ├── src/components/         # Dashboard, simulations, knowledge bases UI
+│   └── Containerfile           # Plugin image build
 ├── backend/               # Python Flask API
 │   ├── main.py            # App entry point and route definitions
 │   ├── requirements.txt
@@ -205,6 +350,13 @@ app/
 |----------|-------------|---------|
 | `VITE_API_BASE_URL` | Backend base URL (set at build time) | `http://backend:5001` |
 
+**Perspective plugin (build-time)**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SUPPLY_CHAIN_API_BASE_URL` | Full backend origin baked into the plugin bundle (`make` passes `PERSPECTIVE_API_BASE_URL`) | *(empty — use console plugin proxy at `/api/plugins/supply-chain-perspective/`)* |
+| `SUPPLY_CHAIN_DEV_API_PROXY_TARGET` | Local `yarn start` webpack dev proxy target | `http://127.0.0.1:5001` |
+
 ### Frontend dependencies
 
 - **React 19** + **Vite 7**
@@ -217,6 +369,33 @@ app/
 - **openai** — Llama Stack OpenAI-compatible client
 - **LangChain** (`langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-openai`, `langchain-postgres`) — document loading, splitting, embedding, PGVector integration
 - **psycopg[binary]** — PostgreSQL driver
+
+### Perspective dependencies
+
+Build and runtime tooling (`app/supply-chain-perspective/`):
+
+- **Node.js 22** + **Yarn 4.13** — plugin bundle build (`yarn build` / `make build-perspective`)
+- **TypeScript 5** + **Webpack 5** — production bundle and module federation
+- **UBI 9** `nodejs-22` and `nginx-120` images — multi-stage `Containerfile` (plugin served on port **9001** with OpenShift service CA TLS)
+
+Console and UI (aligned with OpenShift Console **4.21** dynamic plugin SDK):
+
+- **React 17** + **react-dom 17** — required by `@openshift-console/dynamic-plugin-sdk`
+- **@openshift-console/dynamic-plugin-sdk** `4.21-latest` + **@openshift-console/dynamic-plugin-sdk-webpack** — console plugin API and webpack integration
+- **@console/pluginAPI** `^4.21.0` — declared console plugin dependency in `package.json`
+- **PatternFly 6** (`@patternfly/react-core`, `react-icons`, `react-table`) — console-consistent UI
+- **react-router-dom** 5.3.x + **react-router-dom-v5-compat** — routing inside the perspective
+- **react-i18next** + **i18next** — translations (`plugin__supply-chain-perspective` namespace)
+
+Dashboard features (shared with the standalone frontend):
+
+- **Chart.js 4** + **react-chartjs-2** — demand and revenue charts
+- **Leaflet 1.9** + **react-leaflet 3** — logistics map
+- **react-markdown** — RAG chat responses in the dashboard
+
+Runtime dependency:
+
+- **Backend API** — same Flask endpoints as the main application (`/api/v1/state`, `/api/v1/simulate`, `/api/v1/chat`, etc.)
 
 ## Tags
 
