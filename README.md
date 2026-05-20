@@ -86,13 +86,7 @@ git clone https://github.com/rh-aiservices-bu/ai-supply-chain-agent.git
 cd ai-supply-chain-agent
 ```
 
-### 2. Configure values
-
-Copy and edit the Helm values file:
-
-```bash
-cp helm/values.yaml helm/my-values.yaml
-```
+### 2. Edit values
 
 Set at minimum:
 
@@ -129,6 +123,13 @@ make build-backend build-ingest build-frontend
 make push-backend push-ingest push-frontend
 ```
 
+If deploying Perspective run 
+
+```bash
+make build-perspective
+make push-perspective
+```
+
 Override tags or registry as needed, e.g. `make build-backend BACKEND_TAG=v1 REGISTRY=quay.io/myorg`.
 
 ### 4. Install Helm dependencies
@@ -160,13 +161,13 @@ helm upgrade --install supply-chain-dashboard ./helm \
 
 ```bash
 # First install (creates the OpenShift project if missing)
-make helm-install VALUES_FILE=helm/my-values.yaml
+make helm-install VALUES_FILE=helm/values.yaml
 
 # Subsequent upgrades
-make helm-upgrade VALUES_FILE=helm/my-values.yaml
+make helm-upgrade VALUES_FILE=helm/values.yaml
 
 # Dry-run rendered manifests
-make helm-render VALUES_FILE=helm/my-values.yaml
+make helm-render VALUES_FILE=helm/values.yaml
 
 # Release status
 make helm-status
