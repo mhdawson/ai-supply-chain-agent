@@ -67,27 +67,44 @@ cd ai-supply-chain-agent
 Copy and edit the Helm values file:
 
 ```bash
-cp chart/values.yaml chart/my-values.yaml
+cp helm/values.yaml helm/my-values.yaml
 ```
 
-Set at minimum:
+You can use the default to get started but if want to build and push your
+own updated images you can update:
 
 | Value | Description |
 |-------|-------------|
 | `backend.image.repository` / `tag` | Backend container image |
 | `frontend.image.repository` / `tag` | Frontend container image |
+| `ingest.image.repository` / `tag` | Ingestion container image |
+
+You may also want to update the pgvector connection details so they
+are unique to your deployement.
+
+| Value | Description |
+|-------|-------------|
+| `pgvector.*` | PostgreSQL connection details |
+
+If you want to change the models which are used you can modify:
+
+| Value | Description |
+|-------|-------------|
 | `llama_stack.model` | Llama Stack model identifier |
 | `embed_model` | Embedding model identifier |
-| `pgvector.*` | PostgreSQL connection details |
 
 ### 3. Deploy with Helm
 
 ```bash
-helm upgrade --install ai-supply-chain-agent ./chart \
-  -f chart/my-values.yaml \
+helm dependency build ./helm
+helm upgrade --install ai-supply-chain-agent ./helm \
+  -f helm/my-values.yaml \
   --namespace ai-supply-chain \
-  --create-namespace
+  --create-namespace \
+  --set llm-service.secret.hf_token=$HF_TOKEN
 ```
+**Note:** HF_TOKEN must be set in your environment if you are using
+the defaults and an inference server will be started for the requested model
 
 The Helm chart deploys:
 - **Backend** — Flask API (port 5001)
@@ -101,7 +118,7 @@ The Helm chart deploys:
 After all pods are running, retrieve the frontend Route:
 
 ```bash
-oc get route frontend -n ai-supply-chain
+echo "https://$(oc get route ai-supply-chain-agent-frontend -n ai-supply-chain -o jsonpath='{.spec.host}')"
 ```
 
 Open the displayed URL in your browser.
