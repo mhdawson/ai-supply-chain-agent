@@ -38,10 +38,10 @@ Key capabilities:
 | RAM | 32 GB |
 | Storage | 50 GB (model weights + PGVector data) |
 
-**Important:** The app can be deployed on clusters without a GPU and run the LLM in CPU mode. This is the default set up in helm/values.yaml
-**Important:** IF deploying this in AWS in CPU Mode: Intances must support AVX-512 instruction set. Testing was done using m6i instance types. 
+**Important:** The app can be deployed on clusters without a GPU and run the LLM in CPU mode. This is the default set up in helm/values.yaml  
+**Important:** IF deploying this in AWS in CPU Mode: Intances must support AVX-512 instruction set. Testing was done using m6i instance types.  
 
-For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md)
+For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md)  
 
 ### Minimum software requirements
 
