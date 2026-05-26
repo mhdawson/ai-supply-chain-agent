@@ -159,7 +159,6 @@ else
           }
         ] |
         (.spec.template.spec.metadata.labels["cluster-api/accelerator"]) |= $ACCELERATOR_LABEL |
-        (.spec.template.spec.taints) |= [{ "effect": "NoSchedule", "key": "nvidia.com/gpu", "value": $ACCELERATOR_LABEL }] |
         if $SPOT_MARKET_OPTIONS != "" then
           .spec.template.spec.providerSpec.value.spotMarketOptions |= {}
         else

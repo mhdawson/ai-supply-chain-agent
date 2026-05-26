@@ -10,12 +10,6 @@ This setup deploys a complete GPU-enabled OpenShift environment with:
 - **NVIDIA GPU Operator** for automated GPU resource management
 - **Custom configurations** for production GPU workloads
 
-## Clone the Repository
-
-```bash
-git clone https://github.com/rh-aiservices-bu/ocp-gpu-setup.git
-cd ocp-gpu-setup
-```
 
 ## Step 1: Configure GPU Machine Sets
 
