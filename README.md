@@ -38,6 +38,7 @@ Key capabilities:
 | RAM | 32 GB |
 | Storage | 50 GB (model weights + PGVector data) |
 
+
 ### Minimum software requirements
 
 | Component | Tested version |
@@ -102,30 +103,8 @@ Set at minimum:
 
 Point image repositories at a registry you can push to (defaults use `quay.io/rh-ai-quickstart/...`).
 
-### 3. Build and push images
 
-Build all application images (reads `frontend.clusterId` and `frontend.openshiftAppsDomain` from your values file for the frontend API URL):
-
-```bash
-make build
-```
-
-Or build and push in one step (after `make login` to your registry):
-
-```bash
-make release REGISTRY=quay.io/<your-org>
-```
-
-Individual images:
-
-```bash
-make build-backend build-ingest build-frontend
-make push-backend push-ingest push-frontend
-```
-
-Override tags or registry as needed, e.g. `make build-backend BACKEND_TAG=v1 REGISTRY=quay.io/myorg`.
-
-### 4. Install Helm dependencies
+### 3. Install Helm dependencies
 
 ```bash
 helm dependency update ./helm
@@ -137,7 +116,7 @@ helm dependency update ./helm
 make helm-deps
 ```
 
-### 5. Deploy the application
+### 4. Deploy the application
 
 **Helm (install or upgrade):**
 
@@ -173,7 +152,7 @@ The umbrella chart in `helm/` deploys:
 - **Llama Stack** + **LLM service** — inference (subcharts)
 - **Ingest Job** — optional post-install job (`ingest.enabled`) that loads the knowledge base
 
-### 6. Access the dashboard
+### 5. Access the dashboard
 
 After pods are ready:
 
@@ -197,7 +176,7 @@ make ingest-status
 make ingest-logs
 ```
 
-### 7. (Optional) Deploy the OpenShift Console perspective
+### 6. (Optional) Deploy the OpenShift Console perspective
 
 The Supply Chain perspective is a separate console dynamic plugin. It requires **cluster-admin** to install because the Helm chart creates a `ConsolePlugin` and patches the console operator to enable the plugin cluster-wide.
 
@@ -232,6 +211,29 @@ helm upgrade --install supply-chain-perspective \
 ```
 
 In the OpenShift Console, select the **Supply Chain** perspective. See `app/supply-chain-perspective/README.md` for local console development.
+
+### 7. Build and push images
+
+Build all application images (reads `frontend.clusterId` and `frontend.openshiftAppsDomain` from your values file for the frontend API URL):
+
+```bash
+make build
+```
+
+Or build and push in one step (after `make login` to your registry):
+
+```bash
+make release REGISTRY=quay.io/<your-org>
+```
+
+Individual images:
+
+```bash
+make build-backend build-ingest build-frontend
+make push-backend push-ingest push-frontend
+```
+
+Override tags or registry as needed, e.g. `make build-backend BACKEND_TAG=v1 REGISTRY=quay.io/myorg`.
 
 ### Delete
 
