@@ -38,13 +38,17 @@ Key capabilities:
 | RAM | 32 GB |
 | Storage | 50 GB (model weights + PGVector data) |
 
+**Important:** The app can be deployed on clusters without a GPU and run the LLM in CPU mode. This is the default set up in helm/values.yaml
+**Important:** IF deploying this in AWS in CPU Mode: Intances must support AVX-512 instruction set. Testing was done using m6i instance types. 
+
+For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md)
 
 ### Minimum software requirements
 
 | Component | Tested version |
 |-----------|---------------|
-| OpenShift | 4.16+ |
-| OpenShift AI | 2.13+ |
+| OpenShift | 4.21+ |
+| OpenShift AI | 3.4+ |
 | Helm | 3.14+ |
 | Llama Stack | compatible with `llama-stack` subchart in `helm/` (from [ai-architecture-charts](https://github.com/rh-ai-quickstart/ai-architecture-charts)) |
 | Python | 3.12 |
@@ -212,7 +216,7 @@ helm upgrade --install supply-chain-perspective \
 
 In the OpenShift Console, select the **Supply Chain** perspective. See `app/supply-chain-perspective/README.md` for local console development.
 
-### 7. Build and push images
+### 7. (Optional) Build and push images
 
 Build all application images (reads `frontend.clusterId` and `frontend.openshiftAppsDomain` from your values file for the frontend API URL):
 
