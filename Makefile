@@ -57,6 +57,8 @@ help:
 	@echo ""
 	@echo "  Helm:"
 	@echo "    helm-deps          Update Helm chart dependencies"
+	@echo "    helm-lint          Lint the Helm chart"
+	@echo "    helm-test          Run Helm unit tests (helm-unittest)"
 	@echo "    helm-render        Render chart templates to stdout (dry-run)"
 	@echo "    helm-install       Install the Helm release"
 	@echo "    helm-upgrade       Upgrade an existing Helm release"
@@ -82,7 +84,7 @@ help:
 	@echo "    PERSPECTIVE_API_BASE_URL  $(if $(PERSPECTIVE_API_BASE_URL),$(PERSPECTIVE_API_BASE_URL),(empty — same-origin /api/))"
 	@echo "    NAMESPACE          $(NAMESPACE)"
 	@echo "    HELM_RELEASE       $(HELM_RELEASE)"
-	@echo "    VALUES_FILE        $(VALUES_FILE)  (frontend.clusterId, frontend.openshiftAppsDomain)"
+	@echo "    VALUES_FILE        $(VALUES_FILE)  (set llm-service.secret.hf_token before deploy)"
 	@echo ""
 
 # ============================================================
@@ -114,19 +116,8 @@ build-ingest:
 .PHONY: build-frontend
 build-frontend:
 	@set -eu; \
-	cluster_id=$$(awk '/^frontend:/{f=1} f && /^  clusterId:/{gsub(/"/,""); print $$2; exit}' $(VALUES_FILE)); \
-	apps_domain=$$(awk '/^frontend:/{f=1} f && /^  openshiftAppsDomain:/{gsub(/"/,""); print $$2; exit}' $(VALUES_FILE)); \
-	test -n "$$cluster_id" || { echo "ERROR: set frontend.clusterId in $(VALUES_FILE)"; exit 1; }; \
-	test -n "$$apps_domain" || { echo "ERROR: set frontend.openshiftAppsDomain in $(VALUES_FILE)"; exit 1; }; \
-	api_url="https://$(HELM_RELEASE)-backend-$(NAMESPACE).apps.$${cluster_id}.$${apps_domain}"; \
-	echo ">>> Building frontend image: $(FRONTEND_IMAGE):$(FRONTEND_TAG)"; \
-	echo ">>> VITE_API_BASE_URL=$${api_url} (from $(VALUES_FILE))"; \
 	podman build \
 		--platform $(BUILD_PLATFORM) \
-		--build-arg CLUSTER_ID=$${cluster_id} \
-		--build-arg RELEASE_NAME=$(HELM_RELEASE) \
-		--build-arg NAMESPACE=$(NAMESPACE) \
-		--build-arg OPENSHIFT_APPS_DOMAIN=$${apps_domain} \
 		-f ./app/frontend/Containerfile \
 		-t $(FRONTEND_IMAGE):$(FRONTEND_TAG) \
 		./app/frontend; \
@@ -209,6 +200,26 @@ login:
 helm-deps:
 	@echo ">>> Updating Helm dependencies in $(HELM_CHART)"
 	helm dependency update $(HELM_CHART)
+
+.PHONY: helm-lint
+helm-lint: helm-deps
+	@echo ">>> Linting Helm chart: $(HELM_CHART)"
+	helm lint $(HELM_CHART) -f $(VALUES_FILE)
+
+.PHONY: helm-template
+helm-install-perspective: helm-deps
+	@echo ">>> Installing Helm release: $(HELM_RELEASE) in namespace: $(NAMESPACE)"
+	oc get namespace $(NAMESPACE) 2>/dev/null || oc new-project $(NAMESPACE)
+	helm install $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(NAMESPACE) \
+		-f $(VALUES_FILE) \
+		--wait \
+		--timeout 10m
+
+.PHONY: helm-test
+helm-test: helm-deps
+	@echo ">>> Running Helm unit tests: $(HELM_CHART)"
+	helm unittest $(HELM_CHART)
 
 .PHONY: helm-render
 helm-render: helm-deps
