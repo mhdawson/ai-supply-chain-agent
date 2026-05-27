@@ -21,8 +21,12 @@ HELM_RELEASE   ?= supply-chain-dashboard
 NAMESPACE      ?= supply-chain-dashboard
 VALUES_FILE    ?= $(HELM_CHART)/values.yaml
 
-# --- Podman build platform ---
+# --- Podman ---
 BUILD_PLATFORM ?= linux/amd64
+# Optional on push, e.g. PUSH_EXTRA_ARGS=--tls-verify=false for Kind (localhost:5001)
+PUSH_EXTRA_ARGS ?=
+KIND_VALUES_FILE ?= $(HELM_CHART)/values-kind.yaml
+HELM_EXTRA_ARGS ?=
 
 # ============================================================
 # Help
@@ -64,6 +68,18 @@ help:
 	@echo "    helm-upgrade       Upgrade an existing Helm release"
 	@echo "    helm-uninstall     Uninstall the Helm release"
 	@echo "    helm-status        Show Helm release status"
+	@echo "    helm-install-kind  Install on Kind/Kubernetes (values-kind.yaml + local REGISTRY)"
+	@echo ""
+	@echo "  Kind (CI / local):"
+	@echo "    kind-build-images  Build backend, ingest, and frontend for REGISTRY (default localhost:5001)"
+	@echo "    kind-push-images   Push kind-build-images to REGISTRY"
+	@echo "    k8s-namespace      Create/set kubectl namespace (NAMESPACE)"
+	@echo "    kind-verify          Post-deploy checks (port-forward + curl; Kind cluster must be up)"
+	@echo "    kind-verify-e2e      kind-verify + Playwright UI tests (RUN_UI_E2E=1)"
+	@echo ""
+	@echo "  E2E UI (Playwright):"
+	@echo "    e2e-ui-install       Install pytest-playwright and Chromium"
+	@echo "    e2e-ui               Run browser E2E tests (needs SUPPLY_CHAIN_UI_ENDPOINT)"
 	@echo ""
 	@echo "  Ingest:"
 	@echo "    ingest             Run the knowledge-base ingestion Job on OpenShift"
@@ -144,22 +160,22 @@ push: push-backend push-ingest push-frontend push-perspective
 .PHONY: push-backend
 push-backend:
 	@echo ">>> Pushing backend image: $(BACKEND_IMAGE):$(BACKEND_TAG)"
-	podman push $(BACKEND_IMAGE):$(BACKEND_TAG)
+	podman push $(PUSH_EXTRA_ARGS) $(BACKEND_IMAGE):$(BACKEND_TAG)
 
 .PHONY: push-ingest
 push-ingest:
 	@echo ">>> Pushing ingestion image: $(INGEST_IMAGE):$(INGEST_TAG)"
-	podman push $(INGEST_IMAGE):$(INGEST_TAG)
+	podman push $(PUSH_EXTRA_ARGS) $(INGEST_IMAGE):$(INGEST_TAG)
 
 .PHONY: push-frontend
 push-frontend:
 	@echo ">>> Pushing frontend image: $(FRONTEND_IMAGE):$(FRONTEND_TAG)"
-	podman push $(FRONTEND_IMAGE):$(FRONTEND_TAG)
+	podman push $(PUSH_EXTRA_ARGS) $(FRONTEND_IMAGE):$(FRONTEND_TAG)
 
 .PHONY: push-perspective
 push-perspective:
 	@echo ">>> Pushing perspective image: $(PERSPECTIVE_IMAGE):$(PERSPECTIVE_TAG)"
-	podman push $(PERSPECTIVE_IMAGE):$(PERSPECTIVE_TAG)
+	podman push $(PUSH_EXTRA_ARGS) $(PERSPECTIVE_IMAGE):$(PERSPECTIVE_TAG)
 
 # ============================================================
 # Build & Push (all images with latest tag)
@@ -256,6 +272,53 @@ helm-uninstall:
 helm-status:
 	helm status $(HELM_RELEASE) --namespace $(NAMESPACE)
 
+.PHONY: kind-build-images
+kind-build-images: build-backend build-ingest build-frontend
+
+.PHONY: kind-push-images
+kind-push-images: push-backend push-ingest push-frontend
+
+.PHONY: k8s-namespace
+k8s-namespace:
+	@kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl config set-context --current --namespace=$(NAMESPACE)
+
+.PHONY: kind-verify
+kind-verify:
+	@bash ./scripts/ci/kind-verify-deployment.sh
+
+.PHONY: kind-verify-e2e
+kind-verify-e2e: e2e-ui-install
+	@RUN_UI_E2E=1 bash ./scripts/ci/kind-verify-deployment.sh
+
+.PHONY: e2e-ui-install
+e2e-ui-install:
+	@echo ">>> Installing Playwright UI test dependencies"
+	pip install -r tests/e2e_ui/requirements.txt
+	playwright install chromium
+
+.PHONY: e2e-ui
+e2e-ui: e2e-ui-install
+	@python -m pytest tests/e2e_ui/ -v --tb=short --browser chromium
+
+.PHONY: helm-install-kind
+helm-install-kind: helm-deps k8s-namespace
+	@echo ">>> Installing $(HELM_RELEASE) on Kind/Kubernetes (namespace: $(NAMESPACE), registry: $(REGISTRY))"
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(NAMESPACE) \
+		--create-namespace \
+		-f $(VALUES_FILE) \
+		-f $(KIND_VALUES_FILE) \
+		--set backend.image.repository=$(REGISTRY)/ai-supply-chain-agent-backend \
+		--set backend.image.tag=$(BACKEND_TAG) \
+		--set frontend.image.repository=$(REGISTRY)/ai-supply-chain-agent-frontend \
+		--set frontend.image.tag=$(FRONTEND_TAG) \
+		--set ingest.image.repository=$(REGISTRY)/ai-supply-chain-agent-ingestion \
+		--set ingest.image.tag=$(INGEST_TAG) \
+		$(HELM_EXTRA_ARGS) \
+		--wait \
+		--timeout 15m
+
 # ============================================================
 # Utilities
 # ============================================================
@@ -343,3 +406,4 @@ clean:
 	-podman rmi $(FRONTEND_IMAGE):$(FRONTEND_TAG) 2>/dev/null
 	-podman rmi $(PERSPECTIVE_IMAGE):$(PERSPECTIVE_TAG) 2>/dev/null
 	@echo ">>> Done."
+
