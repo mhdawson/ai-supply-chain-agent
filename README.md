@@ -19,8 +19,8 @@ This quickstart deploys an interactive supply chain operations dashboard backed 
 Key capabilities:
 - **Live dashboard**: KPI bar, demand and revenue charts, a Leaflet logistics map (global / regional / air-freight views), system health metrics, and an alerts panel — all refreshed every 15 seconds.
 - **Scenario simulation**: Select a disruption scenario (e.g. port strike, geopolitical tension) and optionally enable route optimization; the backend updates dashboard state and returns an AI-generated analysis.
-- **RAG chatbot**: A chat sidebar sends questions to a Flask API that performs similarity search over PGVector, builds a context-augmented prompt, and calls the Llama Stack LLM.
-- **Ingestion pipeline**: A Helm post-install job chunks `.txt` knowledge-base documents and embeds them into PGVector using the configured embedding model.
+- **RAG chatbot**: A chat sidebar sends questions to a Flask API that retrieves context from PGVector (default) or a selected Llama Stack vector store, builds a context-augmented prompt, and calls the Llama Stack LLM.
+- **Ingestion pipeline**: A Helm post-install job loads bundled `.txt` knowledge-base documents into Llama Stack vector stores by default (`ingest.strategy: llamastack`); optional `langchain` strategy chunks and embeds into PGVector instead.
 - **OpenShift Console perspective** (optional): A dynamic console plugin in `app/supply-chain-perspective/` adds a dedicated **Supply Chain** perspective in the OpenShift web console with the same dashboard, simulations, and knowledge-base workflows integrated into the cluster UI.
 
 ### Architecture diagrams
@@ -136,7 +136,7 @@ sequenceDiagram
 | Storage | 50 GB (model weights + PGVector data) |
 
 **Important:** The app can be deployed on clusters without a GPU and run the LLM in CPU mode. This is the default set up in helm/values.yaml  
-**Important:** IF deploying this in AWS in CPU Mode: Intances must support AVX-512 instruction set. Testing was done using m6i instance types.  
+**Important:** If deploying this in AWS in CPU Mode: Instances must support AVX-512 instruction set. Testing was done using m6i instance types.  
 
 For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md)  
 
@@ -178,19 +178,20 @@ Defaults used below (overridable on `make`, e.g. `make helm-install NAMESPACE=my
 | Release name | `supply-chain-dashboard` |
 | Namespace | `supply-chain-dashboard` |
 | Values file | `helm/values.yaml` |
+| CI/CD Values File | `helm/values-kind.yaml` |
 
 Run `make help` for the full target list.
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/rh-aiservices-bu/ai-supply-chain-agent.git
+git clone https://github.com/rh-ai-quickstart/ai-supply-chain-agent.git
 cd ai-supply-chain-agent
 ```
 
 ### 2. Edit values
 
-**Only required change:** set your Hugging Face token in `helm/values.yaml` so the `llm-service` subchart can pull gated models (for example `meta-llama/Llama-3.2-1B-Instruct`):
+**Only required change:** set your Hugging Face token in `helm/values.yaml` so the `llm-service` sub-chart can pull gated models (for example `meta-llama/Llama-3.2-1B-Instruct`):
 
 ```yaml
 llm-service:
@@ -207,8 +208,10 @@ Everything else in `helm/values.yaml` works with the chart defaults (images, PGV
 | `backend.image.repository` / `tag`, `frontend.image.*`, `ingest.image.*` | Images built and pushed to your own registry (defaults: `quay.io/rh-ai-quickstart/...`) |
 | `frontend.apiProxyUpstream` | Backend Service is not `http://<release>-backend:<port>` in the release namespace |
 | `backend.env.LLAMA_STACK_MODEL` / `EMBED_MODEL` | Different model or embedding IDs |
+| `backend.env.LLAMA_STACK_URL` | Release installed outside `supply-chain-dashboard` namespace (default URL is namespace-scoped) |
 | `pgvector.secret.*` | Non-demo database credentials |
-| `llm-service.device` / `models.*.device` | GPU inference instead of CPU |
+| `llm-service.device` / `llm-service.models.<model-name>.device` | GPU inference instead of CPU |
+| `ingest.strategy` | `langchain` for PGVector ingest instead of default `llamastack` |
 
 
 ### 3. Install Helm dependencies
@@ -229,7 +232,7 @@ make helm-deps
 
 ```bash
 helm upgrade --install supply-chain-dashboard ./helm \
-  -f helm/my-values.yaml \
+  -f helm/values.yaml \
   --namespace supply-chain-dashboard \
   --create-namespace \
   --wait \
@@ -260,6 +263,8 @@ The umbrella chart in `helm/` deploys:
 - **Ingest Job** — optional post-install job (`ingest.enabled`) that loads the knowledge base
 
 ### 5. Access the dashboard
+
+**See detailed walkthrough [here](/docs/WHAT_TO_EXPECT.md)**
 
 After pods are ready:
 
@@ -321,7 +326,7 @@ In the OpenShift Console, select the **Supply Chain** perspective. See `app/supp
 
 ### 7. (Optional) Build and push images
 
-Build all application images (reads `frontend.clusterId` and `frontend.openshiftAppsDomain` from your values file for the frontend API URL):
+Build all application images:
 
 ```bash
 make build
@@ -366,7 +371,7 @@ helm uninstall supply-chain-perspective --namespace supply-chain-dashboard
 
 ## References
 
-- [What to expect after deployment?](./docs/WHAT_TO_EXPECT.md)]
+- [What to expect after deployment?](./docs/WHAT_TO_EXPECT.md)
 - [Llama Stack documentation](https://llama-stack.readthedocs.io)
 - [LangChain PGVector integration](https://python.langchain.com/docs/integrations/vectorstores/pgvector/)
 - [React Leaflet](https://react-leaflet.js.org/)
@@ -383,28 +388,34 @@ app/
 │   ├── charts/openshift-console-plugin/   # Helm chart (ConsolePlugin + operator patch)
 │   ├── src/components/         # Dashboard, simulations, knowledge bases UI
 │   └── Containerfile           # Plugin image build
-├── backend/               # Python Flask API
-│   ├── main.py            # App entry point and route definitions
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   ├── clients/
-│   │   ├── llama_stack_client.py   # OpenAI-compatible LLM client
-│   │   └── vector_store_client.py  # PGVector / LangChain client
-│   ├── services/
-│   │   ├── chat_service.py         # RAG pipeline + guardrails
-│   │   ├── dashboard_service.py    # KPI / alert / chart state
-│   │   └── route_service.py        # Route optimization logic
-│   └── ingest/                     # Knowledge-base ingestion CLI
+├── backend/
+│   ├── api/                        # Python Flask API (runtime image)
+│   │   ├── main.py                 # App entry point and route definitions
+│   │   ├── requirements.txt
+│   │   ├── Containerfile
+│   │   ├── clients/
+│   │   │   ├── llama_stack_client.py   # OpenAI-compatible LLM client
+│   │   │   ├── vector_store_client.py  # PGVector / LangChain client
+│   │   │   └── opensky_client.py       # Live aircraft positions (map)
+│   │   └── services/
+│   │       ├── chat_service.py         # RAG pipeline + guardrails
+│   │       ├── dashboard_service.py    # KPI / alert / chart state
+│   │       ├── route_service.py        # Route optimization logic
+│   │       ├── knowledge_base_ingest_service.py
+│   │       ├── knowledge_bases_store.py
+│   │       └── simulations_store.py
+│   └── ingestion/                  # Knowledge-base ingestion CLI (ingest image)
 │       ├── main.py
 │       ├── config.py
 │       ├── loaders/document_loader.py
 │       ├── services/ingestion_service.py
+│       ├── services/llamastack_ingestion_service.py
 │       └── knowledge_base/         # .txt source documents
 └── frontend/              # React + Vite SPA
     ├── index.html
     ├── package.json
     ├── vite.config.js
-    ├── Dockerfile
+    ├── Containerfile
     └── src/
         ├── App.jsx
         ├── components/    # AlertsPanel, ChatBar, DashboardHeader,
@@ -427,6 +438,9 @@ app/
 | `POST` | `/api/v1/trigger-event` | Trigger a disruption event for a given map view |
 | `POST` | `/api/v1/simulate` | Run a named scenario with optional route optimization |
 | `POST` | `/api/v1/chat` | RAG-augmented chat with the LLM |
+| `GET` | `/api/v1/vector_stores` | List Llama Stack vector stores (chat picker) |
+| `GET` / `POST` | `/api/v1/knowledge-bases` | List or upload UI-managed knowledge bases |
+| `GET` / `POST` | `/api/v1/simulations` | List or create named simulation records (perspective) |
 
 ### Environment variables
 
@@ -449,10 +463,11 @@ app/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KNOWLEDGE_BASE_DIR` | Path to `.txt` source documents | `ingest/knowledge_base` |
-| `INGEST_CHUNK_SIZE` | Token chunk size | `500` |
-| `INGEST_CHUNK_OVERLAP` | Chunk overlap | `50` |
-| `INGEST_DROP_OLD` | Drop existing collection before ingestion | `false` |
+| `INGEST_STRATEGY` | `llamastack` (server-side) or `langchain` (PGVector) | `llamastack` (chart default) |
+| `KNOWLEDGE_BASE_DIR` | Path to `.txt` source documents | `knowledge_base` |
+| `INGEST_CHUNK_SIZE` | Chunk size (`langchain` strategy only) | `1000` |
+| `INGEST_CHUNK_OVERLAP` | Chunk overlap (`langchain` strategy only) | `200` |
+| `INGEST_DROP_OLD` | Drop existing collection before ingestion (`langchain` only) | `true` |
 | `INGEST_GLOB` | Glob pattern for source files | `**/*.txt` |
 
 **Frontend**
