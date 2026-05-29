@@ -264,7 +264,7 @@ The umbrella chart in `helm/` deploys:
 After pods are ready:
 
 ```bash
-oc get route supply-chain-dashboard-frontend -n supply-chain-dashboard
+oc get route supply-chain-dashboard-frontend -n supply-chain-dashboard -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
 **Makefile alternative:**
