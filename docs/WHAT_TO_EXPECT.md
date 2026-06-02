@@ -14,15 +14,17 @@ A Helm install (`supply-chain-dashboard` in `./helm`) brings up the application 
 |-----------|------|
 | **Backend** (`supply-chain-dashboard-backend`) | Flask API on port 5001 — dashboard state, simulations, RAG chat, knowledge-base uploads |
 | **Frontend** (`supply-chain-dashboard-frontend`) | React SPA on port 8080 — operator dashboard (standalone Route) |
-| **PGVector** (subchart) | PostgreSQL with pgvector for embeddings when using the LangChain ingest path |
+| **PGVector** (subchart) | PostgreSQL with pgvector; used for LangChain ingest and default chat RAG when no vector store is selected |
 | **Llama Stack** (subchart) | LLM and vector-store APIs for chat and ingestion |
 | **LLM service** (subchart) | Model serving (e.g. Llama 3.2 1B) backing Llama Stack |
-| **Ingest Job** (optional, `ingest.enabled`) | Post-install job that loads bundled `.txt` documents into the vector store |
+| **Ingest Job** (optional, `ingest.enabled`) | Post-install job that loads bundled `.txt` documents (`ingest.strategy`: **`llamastack`** by default → Llama Stack vector stores; set `langchain` for PGVector) |
 
-OpenShift **Routes** (typical names):
+OpenShift **Routes** (main Helm release `supply-chain-dashboard`):
 
 - Frontend UI: `supply-chain-dashboard-frontend`
 - Backend API: `supply-chain-dashboard-backend`
+
+The **console perspective** is reached through the OpenShift web console (not a third standalone dashboard Route). The plugin Helm chart exposes a Service (default name `supply-chain-perspective`) that the console loads via a `ConsolePlugin` resource.
 
 Check that workloads are up:
 
@@ -57,9 +59,9 @@ oc get route supply-chain-dashboard-backend -n supply-chain-dashboard -o jsonpat
 curl -s "$(oc get route supply-chain-dashboard-backend -n supply-chain-dashboard -o jsonpath='https://{.spec.host}')/healthz"
 ```
 
-Expect: `{"ok":true}`.
+Expect: `https://supply-chain-dashboard-backend-supply-chain-dashboard.apps.<app>.<cluster_domain>`.
 
-The standalone **frontend** is built with `VITE_API_BASE_URL` pointing at this Route. The **console perspective** usually calls the same API via the plugin Route’s `/api/` proxy (see [Perspective](#openshift-console-perspective-optional) below).
+The standalone **frontend** is built with a proxy pointing at this Route. The **console perspective** usually calls the same API via the plugin Route’s `/api/` proxy (see [Perspective](#openshift-console-perspective-optional) below).
 
 ### API surface (interaction model)
 
@@ -86,7 +88,8 @@ With `optimize: true`, the response includes synthetic **performance** metrics (
 
 - Supply-chain guardrails reject off-topic prompts (food, sports, jokes, etc.).
 - Route-style questions can return optimization narrative from `RouteService`.
-- Otherwise: retrieve context from PGVector and/or the selected Llama Stack vector store, then call the configured model via Llama Stack.
+- With a **vector store** selected in the UI: context comes from Llama Stack (`search_vector_store`).
+- Otherwise: context comes from **PGVector** similarity search when `VectorStoreClient` initialized; if PGVector is empty (default `llamastack` ingest), chat still runs but with little or no RAG context until you pick a Llama Stack store or re-ingest with `langchain`.
 
 Example (chat):
 
@@ -170,7 +173,7 @@ Open the **https** URL in a browser. The app polls `GET /api/v1/state` every **1
 
 A **dynamic console plugin** (`supply-chain-perspective`) that adds a **Supply Chain** perspective to the OpenShift web console. It reimplements the dashboard experience with PatternFly and console navigation, and adds dedicated pages for **Simulations** and **Knowledge bases**.
 
-Installing it requires **cluster-admin** ( `ConsolePlugin` CR + patch to `consoles.operator.openshift.io` ). Deploy separately from the main chart; see [README — Deploy step 7](../README.md#7-optional-deploy-the-openshift-console-perspective).
+Installing it requires **cluster-admin** (`ConsolePlugin` CR + patch to `consoles.operator.openshift.io`). Deploy separately from the main chart; see [README — Deploy step 6](../README.md#6-optional-deploy-the-openshift-console-perspective).
 
 Typical install namespace: same as the app (`supply-chain-dashboard`) so the plugin’s API proxy can reach `supply-chain-dashboard-backend`.
 
