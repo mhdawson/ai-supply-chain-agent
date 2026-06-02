@@ -160,8 +160,7 @@ The perspective plugin image is built for **linux/amd64** (see `app/supply-chain
 
 **Application (backend, frontend, PGVector, Llama Stack)**
 
-- **OpenShift cluster-admin** role, or namespace admin with permission to create Routes, PersistentVolumeClaims, and Jobs, is required to deploy the main Helm chart.
-- A standard user account is sufficient to interact with the deployed dashboard via its Route.
+- Namespace **admin** role is sufficient to deploy the main Helm chart (it creates Routes, Deployments, Services, and a Job).
 
 **OpenShift Console perspective** (`app/supply-chain-perspective/`)
 
