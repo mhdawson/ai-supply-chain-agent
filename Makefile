@@ -350,7 +350,7 @@ oc-status:
 	oc get inferenceservice -n $(NAMESPACE) 2>/dev/null || echo "(no InferenceService CRD found)"
 	@echo ""
 	@echo ">>> Routes:"
-	oc get route -n $(NAMESPACE)
+	@oc get route -n $(NAMESPACE) -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{"https://"}{.spec.host}{"\n"}{end}'
 
 # ============================================================
 # Ingest targets
