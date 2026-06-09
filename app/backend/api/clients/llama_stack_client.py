@@ -41,10 +41,10 @@ class LlamaStackClient:
     def __init__(self, timeout_seconds: int | None = None):
         self.base_url = os.getenv(
             "LLAMA_STACK_URL", "http://llamastack:8321"
-        ).rstrip("/") + "/v1/openai/v1"
+        ).rstrip("/") + "/v1"
         self.model = os.getenv(
             "LLAMA_STACK_MODEL",
-            "meta-llama/Llama-3.2-1B-Instruct",
+            "llama-3-2-1b-instruct/meta-llama/Llama-3.2-1B-Instruct",
         )
         self._timeout = (
             timeout_seconds
