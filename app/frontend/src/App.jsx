@@ -37,6 +37,7 @@ function viewFromHash() {
 
 function App() {
   const [isLightTheme, setIsLightTheme] = useState(false);
+  const [optimize, setOptimize] = useState(false);
   const [mapView, setMapView] = useState("airFreight");
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulationError, setSimulationError] = useState("");
@@ -114,16 +115,32 @@ function App() {
       return;
     }
 
-    const nextHistory = [...chatMessages, { role: "human", content: question }];
-    setChatMessages(nextHistory);
+    const humanMessage = { role: "human", content: question };
+    const historyForApi = [...chatMessages, humanMessage];
+
+    setChatMessages(historyForApi);
     setChatInput("");
     setChatError("");
     setChatLoading(true);
     try {
-      const result = await sendChatMessage(question, nextHistory, selectedVectorStoreId.trim() || undefined);
-      const answer = result?.answer ?? "No response from assistant.";
-      const completion = result?.completion ?? null;
-      setChatMessages((current) => [...current, { role: "ai", content: answer, completion }]);
+      const result = await sendChatMessage(
+        question,
+        historyForApi,
+        selectedVectorStoreId.trim() || undefined,
+        optimize,
+      );
+      const answer =
+        typeof result?.answer === "string" && result.answer.trim()
+          ? result.answer
+          : "No response from assistant.";
+      const aiMessage = {
+        role: "ai",
+        content: answer,
+        completion: result?.completion ?? null,
+      };
+      // Single atomic update so the assistant turn is not lost if an earlier
+      // setChatMessages has not flushed before this runs (seen as empty UI with 200 OK).
+      setChatMessages([...historyForApi, aiMessage]);
     } catch {
       setChatError("Failed to send chat request.");
     } finally {
@@ -162,6 +179,8 @@ function App() {
             <main className="dashboard-grid">
               <SimulationPanel
                 mapView={mapView}
+                optimize={optimize}
+                onOptimizeChange={setOptimize}
                 onRunScenario={handleRunScenario}
                 onTriggerEvent={handleTriggerEvent}
                 simulationLoading={simulationLoading}

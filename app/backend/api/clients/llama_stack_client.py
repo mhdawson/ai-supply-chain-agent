@@ -15,29 +15,61 @@ SYSTEM_PROMPT = (
     "If asked about unrelated topics, politely redirect to supply chain matters."
 )
 
+# Default matches frontend nginx proxy_read_timeout (300s) for slow CPU/GPU inference.
+_DEFAULT_TIMEOUT_SECONDS = 300
+
+
+def timeout_seconds_from_env(default: int = _DEFAULT_TIMEOUT_SECONDS) -> int:
+    """Read ``LLAMA_STACK_TIMEOUT_SECONDS`` (integer seconds)."""
+    raw = os.getenv("LLAMA_STACK_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid LLAMA_STACK_TIMEOUT_SECONDS=%r; using default %s",
+            raw,
+            default,
+        )
+        return default
+
 
 class LlamaStackClient:
     """OpenAI-compatible client pointed at a Llama Stack server."""
 
-    def __init__(self, timeout_seconds: int = 30):
-        self.base_url = os.getenv(
-            "LLAMA_STACK_URL", "http://llamastack:8321"
-        ).rstrip("/") + "/v1/openai/v1"
-        self.model = os.getenv(
+    def __init__(
+        self,
+        timeout_seconds: int | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        label: str = "vllm",
+    ):
+        env_url = os.getenv("LLAMA_STACK_URL", "http://llamastack:8321")
+        self.base_url = (base_url or env_url).rstrip("/") + "/v1"
+        self.label = label
+        self.model = model or os.getenv(
             "LLAMA_STACK_MODEL",
-            "meta-llama/Llama-3.2-1B-Instruct",
+            "llama-3-2-1b-instruct/meta-llama/Llama-3.2-1B-Instruct",
         )
-        self._timeout = timeout_seconds
+        self._timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else timeout_seconds_from_env()
+        )
 
         self._client = OpenAI(
             api_key="not-required",
             base_url=self.base_url,
+            timeout=self._timeout,
         )
         logger.info(
-            "LlamaStackClient: base_url=%s model=%s (set LLAMA_STACK_MODEL to match "
-            "a model id served by this stack, e.g. remote-llm from Helm global.models)",
+            "LlamaStackClient[%s]: base_url=%s model=%s timeout=%ss "
+            "(LLAMA_STACK_TIMEOUT_SECONDS for slow inference)",
+            self.label,
             self.base_url,
             self.model,
+            self._timeout,
         )
 
     @staticmethod
@@ -85,21 +117,33 @@ class LlamaStackClient:
         else:
             messages.append({"role": "user", "content": user_input})
 
+        logger.info(
+            "LlamaStackClient[%s]: sending request — base_url=%s model=%s message_count=%d",
+            self.label,
+            self.base_url,
+            self.model,
+            len(messages),
+        )
         try:
             completion = self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.0,
+                temperature=0.1,
                 timeout=self._timeout,
             )
-            logger.info("LlamaStackClient: completion: %s", completion)
             text = completion.choices[0].message.content or "Darn! Something went wrong."
+            logger.info(
+                "LlamaStackClient[%s]: response received — model=%s finish_reason=%s",
+                self.label,
+                completion.model,
+                completion.choices[0].finish_reason,
+            )
             return {
                 "answer": text,
                 "completion": self._completion_to_json(completion),
             }
         except Exception as exc:
-            logger.error("Llama Stack request failed: %s", exc)
+            logger.error("LlamaStackClient[%s]: request failed: %s", self.label, exc)
             return {
                 "answer": f"Darn! Something went wrong: {exc}",
                 "completion": None,

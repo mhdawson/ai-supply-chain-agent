@@ -28,6 +28,7 @@ const REFRESH_INTERVAL_MS = 15000;
 export function useDashboardController() {
   const { t } = useTranslation('plugin__supply-chain-perspective');
   const [isLightTheme, setIsLightTheme] = useState(false);
+  const [optimize, setOptimize] = useState(false);
   const [mapView, setMapView] = useState<MapViewId>('airFreight');
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulationError, setSimulationError] = useState('');
@@ -143,29 +144,36 @@ export function useDashboardController() {
       return;
     }
 
-    const nextHistory: ChatMessage[] = [...chatMessages, { role: 'human', content: question }];
-    setChatMessages(nextHistory);
+    const humanMessage: ChatMessage = { role: 'human', content: question };
+    const historyForApi: ChatMessage[] = [...chatMessages, humanMessage];
+
+    setChatMessages(historyForApi);
     setChatInput('');
     setChatError('');
     setChatLoading(true);
     try {
       const result = await postAssistantMessage(
         question,
-        nextHistory,
+        historyForApi,
         selectedVectorStoreId.trim() || undefined,
+        optimize,
       );
-      const answer: string = result?.answer ?? t('No response from assistant.');
-      const completion = result?.completion ?? null;
-      setChatMessages((current) => [
-        ...current,
-        { role: 'ai' as const, content: answer, completion },
-      ]);
+      const answer =
+        typeof result?.answer === 'string' && result.answer.trim()
+          ? result.answer
+          : t('No response from assistant.');
+      const aiMessage: ChatMessage = {
+        role: 'ai',
+        content: answer,
+        completion: result?.completion ?? null,
+      };
+      setChatMessages([...historyForApi, aiMessage]);
     } catch {
       setChatError(t('Failed to send chat request.'));
     } finally {
       setChatLoading(false);
     }
-  }, [chatInput, chatLoading, chatMessages, selectedVectorStoreId, t]);
+  }, [chatInput, chatLoading, chatMessages, optimize, selectedVectorStoreId, t]);
 
   const kpis = useMemo(() => getKpis(dashboardState), [dashboardState]);
   const alerts = useMemo(() => getFlattenedAlerts(dashboardState), [dashboardState]);
@@ -184,6 +192,8 @@ export function useDashboardController() {
   return {
     isLightTheme,
     setIsLightTheme,
+    optimize,
+    setOptimize,
     mapView,
     setMapView,
     simulationLoading,

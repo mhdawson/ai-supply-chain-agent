@@ -23,14 +23,15 @@ llama-stack:
 
 llm-service:
   enabled: true
-  device: cpu
+  device: cpu # Change to gpu (Change #models.llama-3-2-1b-instruct.device to gpu if you change this)
   secret:
+    # Required: set your Hugging Face token (https://huggingface.co/settings/tokens) for gated models.
     hf_token: ""
     enabled: true
   models:
     llama-3-2-1b-instruct:
       enabled: true
-      device: cpu
+      device: cpu # Change to gpu for better performance
 
 imagePullSecrets: []
 
@@ -46,12 +47,16 @@ backend:
   route:
     enabled: true
     host: ""
-  # Name of the Secret created by the pgvector subchart that holds the
+    timeout: 5m
+  # Name of the Secret created by the pgvector sub-chart that holds the
   # database password under the key "password".
   pgvectorSecretName: pgvector
   env:
     LLAMA_STACK_URL: http://llamastack.supply-chain-dashboard.svc.cluster.local:8321
-    LLAMA_STACK_MODEL: meta-llama/Llama-3.2-1B-Instruct
+    # LlamaStack registers models as {provider_id}/{model_id} on the /v1 API.
+    LLAMA_STACK_MODEL: llama-3-2-1b-instruct/meta-llama/Llama-3.2-1B-Instruct
+    # OpenAI client timeout (seconds) for chat and vector-store API calls.
+    LLAMA_STACK_TIMEOUT_SECONDS: "300"
     EMBED_MODEL: all-MiniLM-L6-v2
     # PG_ prefix avoids collision with the Kubernetes service-discovery
     # variable PGVECTOR_PORT=tcp://ip:port that is auto-injected for the
@@ -93,11 +98,12 @@ frontend:
     pullPolicy: Always
   service:
     port: 8080
+  # Nginx /api proxy timeouts (envsubst into default.conf.template). Increase for slow LLM chat.
+  apiProxy:
+    connectTimeout: 60s
+    sendTimeout: 300s
+    readTimeout: 300s
   route:
     enabled: true
-    host: ""
-  # Configure the API URL baked into the frontend image (only file to edit; then make build-frontend).
-  # Resolves to: https://<release>-backend-<namespace>.apps.<clusterId>.<openshiftAppsDomain>
-  clusterId: ai-dev02
-  openshiftAppsDomain: kni.syseng.devcluster.openshift.com
-
+    host: "" # Set the host for the frontend route, this is done dynamically in the frontend deployment template.
+    timeout: 5m
