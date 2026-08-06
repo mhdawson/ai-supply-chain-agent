@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { formatCompletionSummary } from "../utils/chatCompletionMeta.js";
 import { safeJsonStringify } from "../utils/safeJsonStringify.js";
@@ -9,28 +10,26 @@ function messageBubbleClassName(role, compact) {
 }
 
 export function ChatBar({
-  chatInput,
+  chatInput = "",
   onChangeChatInput,
   onSubmitChat,
-  chatLoading,
-  chatError,
-  chatMessages,
-  vectorStores = [],
-  vectorStoresLoading = false,
-  vectorStoresError = "",
-  selectedVectorStoreId = "",
-  onChangeVectorStore,
+  chatLoading = false,
+  chatError = "",
+  chatMessages = [],
+  chatRagHint = "",
 }) {
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
   const logEndRef = useRef(null);
   const modalInputRef = useRef(null);
   const wasChatLoadingRef = useRef(false);
+  const previouslyFocusedRef = useRef(null);
 
   useEffect(() => {
     if (!isChatModalOpen || !logEndRef.current) {
       return;
     }
     logEndRef.current.scrollIntoView?.({ behavior: "smooth", block: "end" });
+     
   }, [chatMessages, chatLoading, isChatModalOpen]);
 
   // When a slow reply finishes, surface the modal once (user can dismiss it afterward).
@@ -38,6 +37,7 @@ export function ChatBar({
     if (wasChatLoadingRef.current && !chatLoading) {
       const last = chatMessages[chatMessages.length - 1];
       if (last?.role === "ai") {
+         
         setIsChatModalOpen(true);
       }
     }
@@ -45,9 +45,28 @@ export function ChatBar({
   }, [chatMessages, chatLoading]);
 
   useEffect(() => {
-    if (isChatModalOpen) {
-      window.setTimeout(() => modalInputRef.current?.focus(), 0);
+    if (!isChatModalOpen) {
+      return;
     }
+    previouslyFocusedRef.current = document.activeElement;
+    const timer = window.setTimeout(() => modalInputRef.current?.focus(), 0);
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsChatModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keydown", onKeyDown);
+      const prior = previouslyFocusedRef.current;
+      if (prior && typeof prior.focus === "function") {
+        prior.focus();
+      }
+    };
   }, [isChatModalOpen]);
 
   const openModal = () => setIsChatModalOpen(true);
@@ -71,37 +90,6 @@ export function ChatBar({
     }
   };
 
-  const renderVectorStoreRow = () => (
-    <div className="chat-vector-row">
-      <label className="chat-vector-label" htmlFor="chat-vector-store">
-        Knowledge base
-      </label>
-      <select
-        id="chat-vector-store"
-        className="chat-vector-select"
-        value={selectedVectorStoreId}
-        onChange={(event) => onChangeVectorStore(event.target.value)}
-        disabled={chatLoading || vectorStoresLoading}
-        aria-label="Knowledge base"
-        data-test="chat-vector-store"
-      >
-        <option value="">Default (dashboard PGVector)</option>
-        {vectorStores.map((store) => (
-          <option key={store.id} value={store.id}>
-            {store.status && store.status !== "completed"
-              ? `${store.name} (${store.status})`
-              : store.name}
-          </option>
-        ))}
-      </select>
-      {vectorStoresError ? (
-        <span className="chat-vector-error" role="status">
-          {vectorStoresError}
-        </span>
-      ) : null}
-    </div>
-  );
-
   const renderMessageLog = (compact) => (
     <>
       {chatMessages.length === 0 ? (
@@ -117,6 +105,9 @@ export function ChatBar({
             <div key={`${message.role}-${index}`} className={messageBubbleClassName(message.role, compact)}>
               {message.role === "ai" ? (
                 <>
+                  {["general_simulation", "fetch_news", "knowledge_base"].includes(message.tool) ? (
+                    <p className="muted chat-tool-badge">Used tool: {message.tool}</p>
+                  ) : null}
                   <ChatMarkdownBody content={message.content} compact={compact} />
                   {hasCompletion && message.completion ? (
                     <div className="chat-completion-meta">
@@ -139,6 +130,11 @@ export function ChatBar({
       )}
       {chatLoading ? <p className="muted">Thinking…</p> : null}
       {chatError ? <p className="error">{chatError}</p> : null}
+      {chatRagHint ? (
+        <p className="muted" role="status">
+          {chatRagHint}
+        </p>
+      ) : null}
       {compact ? null : <div ref={logEndRef} />}
     </>
   );
@@ -146,7 +142,6 @@ export function ChatBar({
   return (
     <>
       <div className="chat-bar-container">
-        {renderVectorStoreRow()}
         {!isChatModalOpen && chatMessages.length > 0 ? (
           <div className="chat-bar-preview" data-test="chat-collapsed-preview">
             {renderMessageLog(true)}
@@ -162,7 +157,12 @@ export function ChatBar({
             disabled={chatLoading}
             aria-label="Chat input"
           />
-          <button type="button" onClick={handleSend} disabled={chatLoading || !chatInput.trim()}>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={chatLoading || !chatInput.trim()}
+            aria-label={chatLoading ? "Sending" : "Send chat message"}
+          >
             {chatLoading ? "…" : "➤"}
           </button>
           {chatMessages.length > 0 ? (
@@ -179,6 +179,11 @@ export function ChatBar({
           role="dialog"
           aria-modal="true"
           aria-labelledby="chat-modal-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeModal();
+            }
+          }}
         >
           <div className="chat-modal-content">
             <div className="chat-modal-header">
@@ -209,3 +214,13 @@ export function ChatBar({
     </>
   );
 }
+
+ChatBar.propTypes = {
+  chatInput: PropTypes.string,
+  onChangeChatInput: PropTypes.func,
+  onSubmitChat: PropTypes.func,
+  chatLoading: PropTypes.bool,
+  chatError: PropTypes.string,
+  chatMessages: PropTypes.array,
+  chatRagHint: PropTypes.string,
+};

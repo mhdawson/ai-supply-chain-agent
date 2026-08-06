@@ -8,26 +8,24 @@ An AI-powered supply chain intelligence dashboard that combines real-time logist
 - [Architecture diagrams](#architecture-diagrams)
 - [Requirements](#requirements)
 - [Deploy](#deploy)
-  - [Option A: Local CPU/GPU](#option-a-local-cpugpu)
-  - [Option B: External GPU model](#option-b-external-gpu-model)
+  - [Option A: MaaS / external model (default)](#option-a-maas--external-model-default)
+  - [Option B: Local CPU/GPU](#option-b-local-cpugpu)
 - [References](#references)
 - [Technical details](#technical-details)
 - [Tags](#tags)
 
 ## Detailed description
 
-This quickstart deploys an interactive supply chain operations dashboard backed by a Llama Stack LLM and a PGVector knowledge base. Operators can monitor KPIs (inventory levels, revenue, route efficiency), trigger simulated disruption scenarios (port strikes, geopolitical events), and ask natural-language questions via a built-in RAG chatbot that draws on a curated supply-chain risk knowledge base.
+This quickstart deploys an interactive supply chain impact workspace backed by a Llama Stack LLM, a PGVector knowledge base, and a general-simulation impact engine. Operators run what-if scenarios (port strikes, airspace closures, Suez blockage), inspect affected entities and diversions on a map, and ask natural-language questions via a RAG chatbot grounded in curated risk documents.
 
 Key capabilities:
-- **Live dashboard**: KPI bar, demand and revenue charts, a Leaflet logistics map (global / regional / air-freight views), system health metrics, and an alerts panel — all refreshed every 15 seconds.
-- **Scenario simulation**: Select a disruption scenario (e.g. port strike, geopolitical tension) and optionally enable route optimization; the backend updates dashboard state and returns an AI-generated analysis.
-- **RAG chatbot**: A chat sidebar sends questions to a Flask API that retrieves context from PGVector (default) or a selected Llama Stack vector store, builds a context-augmented prompt, and calls the Llama Stack LLM.
-- **Ingestion pipeline**: A Helm post-install job loads bundled `.txt` knowledge-base documents into Llama Stack vector stores by default (`ingest.strategy: llamastack`); optional `langchain` strategy chunks and embeds into PGVector instead.
-- **OpenShift Console perspective** (optional): A dynamic console plugin in `app/supply-chain-perspective/` adds a dedicated **Supply Chain** perspective in the OpenShift web console with the same dashboard, simulations, and knowledge-base workflows integrated into the cluster UI.
+- **Impact simulation**: Pick a seeded scenario, run a natural-language impact query, and review score, value at risk, affected entities, and recommended diversions on a Leaflet map.
+- **RAG chatbot**: Streaming chat with per-scenario history; the UI auto-matches a Llama Stack vector store by scenario keywords.
+- **Knowledge bases**: Upload `.txt`/`.pdf` documents at runtime; a Helm post-install job also loads bundled risk analyses into Llama Stack vector stores (`ingest.strategy: llamastack`) or optionally PGVector (`langchain`).
 
 ### Architecture diagrams
 
-The quickstart runs on OpenShift as a Helm umbrella chart (`supply-chain-dashboard`). Operators reach the dashboard through a standalone Route or, optionally, the OpenShift Console **Supply Chain** perspective. The Flask backend drives UI state, simulations, and RAG chat; Llama Stack and PGVector provide inference and retrieval.
+The quickstart runs on OpenShift as a Helm umbrella chart (`supply-chain-dashboard`). Operators reach the dashboard through a standalone Route. The Flask backend drives UI state, simulations, and RAG chat; Llama Stack and PGVector provide inference and retrieval.
 
 #### Deployment (OpenShift)
 
@@ -35,7 +33,6 @@ The quickstart runs on OpenShift as a Helm umbrella chart (`supply-chain-dashboa
 flowchart TB
   subgraph users["Operators"]
     U1["Browser — standalone dashboard"]
-    U2["OpenShift Console — Supply Chain perspective<br/>(optional, cluster-admin install)"]
   end
 
   subgraph ocp["OpenShift cluster"]
@@ -43,11 +40,9 @@ flowchart TB
       subgraph routes["Routes"]
         R_FE["supply-chain-dashboard-frontend"]
         R_BE["supply-chain-dashboard-backend"]
-        R_PLUG["perspective plugin Route<br/>(optional)"]
       end
 
       FE["Frontend<br/>React + nginx :8080<br/>polls /api/v1/state"]
-      PLUG["Console plugin<br/>PatternFly UI :9001"]
       BE["Backend<br/>Flask API :5001"]
 
       subgraph jobs["Jobs"]
@@ -57,26 +52,22 @@ flowchart TB
       subgraph data["Data & AI (Helm subcharts)"]
         PG[("PGVector<br/>PostgreSQL + pgvector")]
         LS["Llama Stack<br/>:8321"]
-        LLM["LLM service<br/>Llama 3.2 1B"]
       end
     end
   end
 
   subgraph external["External"]
-    HF["Hugging Face<br/>model weights"]
+    MAAS["LiteMaaS / OpenAI-compatible<br/>inference (default)"]
   end
 
   U1 --> R_FE --> FE
-  U2 --> R_PLUG --> PLUG
   FE -->|"same-origin /api/* proxy"| BE
-  PLUG -->|"/api/* proxy"| BE
   U1 -.->|"direct API (curl, tools)"| R_BE
   R_BE --> BE
 
   BE -->|"RAG similarity search"| PG
   BE -->|"chat, vector stores, ingest API"| LS
-  LS --> LLM
-  LLM --> HF
+  LS --> MAAS
 
   ING -->|"llamastack or langchain strategy"| LS
   ING -.->|"langchain path"| PG
@@ -85,10 +76,12 @@ flowchart TB
   classDef app fill:#f3e8fd,stroke:#7c3aed,color:#111
   classDef data fill:#ecfdf5,stroke:#059669,color:#111
   classDef route fill:#fff7ed,stroke:#ea580c,color:#111
-  class U1,U2 user
-  class FE,PLUG,BE,ING app
-  class PG,LS,LLM data
-  class R_FE,R_BE,R_PLUG route
+  classDef ext fill:#eff6ff,stroke:#2563eb,color:#111
+  class U1 user
+  class FE,BE,ING app
+  class PG,LS data
+  class R_FE,R_BE route
+  class MAAS ext
 ```
 
 #### RAG chat and dashboard refresh
@@ -96,11 +89,11 @@ flowchart TB
 ```mermaid
 sequenceDiagram
   autonumber
-  participant UI as Frontend or Console plugin
+  participant UI as Frontend
   participant BE as Backend (Flask)
   participant PG as PGVector
   participant LS as Llama Stack
-  participant LLM as LLM service
+  participant LLM as MaaS / external model
 
   Note over UI,LLM: Dashboard — every 15s
   UI->>BE: GET /api/v1/state
@@ -130,17 +123,16 @@ sequenceDiagram
 
 ### Minimum hardware requirements
 
-| Resource | Minimum |
-|----------|---------|
-| GPU | 1× NVIDIA A10G (24 GB VRAM) or equivalent for LLM inference |
-| CPU | 8 vCPU |
-| RAM | 32 GB |
-| Storage | 50 GB (model weights + PGVector data) |
+| Resource | Minimum (MaaS default) | With local `llm-service` |
+|----------|------------------------|---------------------------|
+| GPU | Not required | 1× NVIDIA A10G (24 GB VRAM) or equivalent, or larger CPU nodes |
+| CPU | 4 vCPU | 8+ vCPU |
+| RAM | 16 GB | 32+ GB (CPU vLLM needs more) |
+| Storage | 20 GB (PGVector + app) | 50 GB (model weights + PGVector) |
 
-**Important:** The app can be deployed on clusters without a GPU and run the LLM in CPU mode. This is the default set up in helm/values.yaml  
-**Important:** If deploying this in AWS in CPU Mode: Instances must support AVX-512 instruction set. Testing was done using m6i instance types.  
+**Default:** `helm/values.yaml` uses LiteMaaS (`global.models.external-model`) and leaves `llm-service.enabled: false`, so no in-cluster model or GPU is required.
 
-For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md)  
+**Optional local model:** re-enable `llm-service` and a gated Hugging Face model (CPU or GPU). On AWS CPU mode, instances must support AVX-512 (tested on m6i). For GPU infrastructure in AWS see [AWS Setup](./infra/prereqs/ocp-gpu-setup/README.md).
 
 ### Minimum software requirements
 
@@ -151,23 +143,14 @@ For setting up GPU infrastructure in AWS please see [AWS Setup](./infra/prereqs/
 | Helm | 3.14+ |
 | Llama Stack | compatible with `llama-stack` subchart in `helm/` (from [ai-architecture-charts](https://github.com/rh-ai-quickstart/ai-architecture-charts)) |
 | Python | 3.12 |
-| Node.js | 22 (frontend and perspective plugin builds) |
-| Yarn | 4.13+ (perspective plugin build; see `packageManager` in `app/supply-chain-perspective/package.json`) |
-| OpenShift Console | 4.12+ cluster with dynamic plugins enabled (`ConsolePlugin` CRD v1) |
-| `oc` CLI | Required to install the perspective Helm chart and patch the console operator |
-
-The perspective plugin image is built for **linux/amd64** (see `app/supply-chain-perspective/Containerfile`). At runtime it expects the **backend API** from the main Helm deployment (or a build-time override via `SUPPLY_CHAIN_API_BASE_URL`).
+| Node.js | 22 (frontend builds) |
+| `oc` CLI | Recommended for deploy status and troubleshooting |
 
 ### Required user permissions
 
 **Application (backend, frontend, PGVector, Llama Stack)**
 
 - Namespace **admin** role is sufficient to deploy the main Helm chart (it creates Routes, Deployments, Services, and a Job).
-
-**OpenShift Console perspective** (`app/supply-chain-perspective/`)
-
-- **Cluster-admin is required.** Installing the perspective registers a `ConsolePlugin` custom resource and enables the plugin in the cluster-wide `consoles.operator.openshift.io` configuration. Namespace-scoped admin is not sufficient.
-- After installation, any user who can access the OpenShift Console can use the Supply Chain perspective (subject to your console RBAC).
 
 ## Deploy
 
@@ -185,8 +168,10 @@ Run `make help` for the full target list.
 
 For step 4, choose one of two deployment options:
 
-- **[Option A](#option-a-local-cpugpu)** — deploy with a local LLM (CPU or GPU via KServe). Requires a Hugging Face token.
-- **[Option B](#option-b-external-gpu-model)** — point the quickstart at an external vLLM-compatible endpoint. No local model deployment required.
+- **[Option A](#option-a-maas--external-model-default)** — default. Llama Stack calls LiteMaaS (or another OpenAI-compatible endpoint). No local model pod. Requires an API token.
+- **[Option B](#option-b-local-cpugpu)** — deploy an in-cluster LLM via `llm-service` (CPU or GPU). Requires a Hugging Face token for gated models.
+
+General Simulation (optional subchart) uses its **own** OpenAI credentials (`api.llm` / `ingestion.llm` in secrets) — not LiteMaaS.
 
 ### 1. Clone the repository
 
@@ -195,29 +180,51 @@ git clone https://github.com/rh-ai-quickstart/ai-supply-chain-agent.git
 cd ai-supply-chain-agent
 ```
 
-### 2. Edit values
+### 2. Deploy secrets and values
 
-**Only required change:** set your Hugging Face token in `helm/values.yaml` so the `llm-service` sub-chart can pull gated models (for example `meta-llama/Llama-3.2-1B-Instruct`):
+**Required (Option A / default):** set your MaaS / LiteMaaS API token so Llama Stack can call `global.models.external-model`.
 
-```yaml
-llm-service:
-  secret:
-    hf_token: "<your-hf-token>"
+**Option A secrets — use `helm/secrets.yaml`** (recommended for local development):
+
+```bash
+cp helm/secrets.example.yaml helm/secrets.yaml
+# Edit helm/secrets.yaml and set global.models.external-model.apiToken
 ```
 
-Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with read access to the models you use.
+Then deploy as usual — the Makefile automatically applies `helm/secrets.yaml` if it exists:
 
-Everything else in `helm/values.yaml` works with the chart defaults (images, PGVector demo credentials, in-cluster API proxy, Llama Stack URLs). Override those only when you use a custom registry, namespace layout, or GPU settings.
+```bash
+make helm-deps
+make helm-install
+```
+
+**Option A secrets — pre-create / override at install** (token never needs to sit in a file):
+
+```bash
+helm upgrade --install supply-chain-dashboard ./helm \
+  -f helm/values.yaml \
+  --set global.models.external-model.apiToken="<your-maas-token>" \
+  --namespace supply-chain-dashboard \
+  --create-namespace \
+  --wait \
+  --timeout 10m
+```
+
+**Only when using Option B (local model):** also set a Hugging Face token so `llm-service` can pull gated weights (`llm-service.secret.hf_token` in `secrets.yaml`, or pre-create Secret `huggingface-secret` with key `HF_TOKEN`).
+
+Everything else in `helm/values.yaml` works with the chart defaults (images, PGVector demo credentials, in-cluster API proxy, Llama Stack URLs). Override those only when you use a custom registry, namespace layout, or a local GPU model.
 
 | Optional override | When you need it |
 |-------------------|------------------|
 | `backend.image.repository` / `tag`, `frontend.image.*`, `ingest.image.*` | Images built and pushed to your own registry (defaults: `quay.io/rh-ai-quickstart/...`) |
 | `frontend.apiProxyUpstream` | Backend Service is not `http://<release>-backend:<port>` in the release namespace |
+| `global.models.external-model.id` / `url` | Different MaaS model or endpoint |
 | `backend.env.LLAMA_STACK_MODEL` / `EMBED_MODEL` | Different model or embedding IDs |
 | `backend.env.LLAMA_STACK_URL` | Release installed outside `supply-chain-dashboard` namespace (default URL is namespace-scoped) |
 | `pgvector.secret.*` | Non-demo database credentials |
-| `llm-service.device` / `llm-service.models.<model-name>.device` | GPU inference instead of CPU |
+| `llm-service.enabled` + `device` / per-model `device` | Local inference instead of MaaS |
 | `ingest.strategy` | `langchain` for PGVector ingest instead of default `llamastack` |
+| `general-simulation.api.llm.*` | Gen-sim OpenAI endpoint / model overrides (`apiKey` in secrets) |
 
 
 ### 3. Install Helm dependencies
@@ -234,7 +241,9 @@ make helm-deps
 
 ### 4. Deploy the application
 
-#### Option A: Local CPU/GPU
+#### Option A: MaaS / external model (default)
+
+`helm/values.yaml` already enables `global.models.external-model` (LiteMaaS) and disables `llm-service`. After setting `global.models.external-model.apiToken` (step 2):
 
 **Helm (install or upgrade):**
 
@@ -267,38 +276,51 @@ The umbrella chart in `helm/` deploys:
 - **Backend** — Flask API (port 5001), Route `supply-chain-dashboard-backend`
 - **Frontend** — React SPA served by nginx (port 8080), Route `supply-chain-dashboard-frontend`
 - **PGVector** — PostgreSQL + pgvector (subchart)
-- **Llama Stack** + **LLM service** — inference (subcharts)
+- **Llama Stack** — inference API (subchart); default provider is MaaS / external-model
+- **General Simulation** — optional subchart (OpenAI LLM via secrets; not wired to MaaS)
 - **Ingest Job** — optional post-install job (`ingest.enabled`) that loads the knowledge base
 
-#### Option B: External GPU model
-
-If you have an external vLLM-compatible inference endpoint (for example, a model already deployed on a GPU cluster or a managed inference service), you can point the quickstart at it instead of deploying a local LLM service.
-
-Use `helm/gpu-values.yaml` as your values file.
-
-**Helm (install or upgrade):**
+To point at a non-default OpenAI-compatible endpoint (same pattern as `helm/gpu-values.yaml`):
 
 ```bash
 helm upgrade --install supply-chain-dashboard ./helm \
-  -f helm/gpu-values.yaml \
+  -f helm/values.yaml \
   --set global.models.external-model.id=<your-model-id> \
   --set global.models.external-model.url=https://<your-endpoint>/v1 \
   --set global.models.external-model.apiToken=<your-token> \
-  --set llama-stack.secrets.EXTERNAL_MODEL_API_TOKEN=<your-token> \
-  --set backend.env.LLAMA_STACK_MODEL=external-model/<your-model-id> \
   --namespace supply-chain-dashboard \
   --create-namespace \
   --wait \
   --timeout 10m
 ```
 
-Replace:
-- `<your-model-id>` — the model ID as served by your endpoint (e.g. `meta-llama/Llama-3.1-8B-Instruct`)
-- `https://<your-endpoint>/v1` — the base URL of your vLLM-compatible inference endpoint
-- `<your-token>` — your API token; passed twice: once as `apiToken` for the init container health check, and once into the `llama-stack-env` Secret for LlamaStack runtime use
-
 Once deployed, continue from [step 5](#5-access-the-dashboard).
 
+#### Option B: Local CPU/GPU
+
+Re-enable the in-cluster model and disable MaaS, for example:
+
+```yaml
+# overrides or edit values.yaml
+global:
+  models:
+    llama-3-2-3b-instruct:
+      enabled: true
+    external-model:
+      enabled: false
+llm-service:
+  enabled: true
+  models:
+    llama-3-2-3b-instruct:
+      enabled: true
+backend:
+  env:
+    LLAMA_STACK_MODEL: llama-3-2-3b-instruct/meta-llama/Llama-3.2-3B-Instruct
+```
+
+Set `llm-service.secret.hf_token` (or Secret `huggingface-secret`), then install with the same `helm upgrade --install` / `make helm-install` commands as Option A. Use `llm-service.device: gpu` (and matching per-model `device`) when GPUs are available.
+
+Once deployed, continue from [step 5](#5-access-the-dashboard).
 ### 5. Access the dashboard
 
 **See detailed walkthrough [here](/docs/WHAT_TO_EXPECT.md)**
@@ -325,43 +347,7 @@ make ingest-status
 make ingest-logs
 ```
 
-### 6. (Optional) Deploy the OpenShift Console perspective
-
-The Supply Chain perspective is a separate console dynamic plugin. It requires **cluster-admin** to install because the Helm chart creates a `ConsolePlugin` and patches the console operator to enable the plugin cluster-wide.
-
-By default the plugin chart proxies `/api/` to the backend Service `supply-chain-dashboard-backend` in the same namespace as the main release.
-
-**Build and push the plugin image** (from the repo root):
-
-```bash
-make build-perspective push-perspective
-```
-
-**Makefile alternative** (build + push):
-
-```bash
-make release-perspective REGISTRY=quay.io/<your-org>
-```
-
-If the API is not reached via the console same-origin proxy, bake in a full backend origin at build time:
-
-```bash
-make build-perspective PERSPECTIVE_API_BASE_URL=https://supply-chain-dashboard-backend-supply-chain-dashboard.apps.<cluster>.<domain>
-```
-
-**Helm** (typically the same namespace as the dashboard so the API proxy resolves):
-
-```bash
-helm upgrade --install supply-chain-perspective \
-  ./app/supply-chain-perspective/charts/openshift-console-plugin \
-  --namespace supply-chain-dashboard \
-  --create-namespace \
-  --set plugin.image=quay.io/rh-ai-quickstart/ai-supply-chain-agent-perspective:latest
-```
-
-In the OpenShift Console, select the **Supply Chain** perspective. See `app/supply-chain-perspective/README.md` for local console development.
-
-### 7. (Optional) Build and push images
+### 6. (Optional) Build and push images
 
 Build all application images:
 
@@ -400,19 +386,12 @@ make helm-uninstall
 oc delete project supply-chain-dashboard
 ```
 
-**Perspective plugin (if installed):**
-
-```bash
-helm uninstall supply-chain-perspective --namespace supply-chain-dashboard
-```
-
 ## References
 
 - [What to expect after deployment?](./docs/WHAT_TO_EXPECT.md)
 - [Llama Stack documentation](https://llama-stack.readthedocs.io)
 - [LangChain PGVector integration](https://python.langchain.com/docs/integrations/vectorstores/pgvector/)
 - [React Leaflet](https://react-leaflet.js.org/)
-- [Chart.js](https://www.chartjs.org/)
 - [OpenShift AI documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
 
 ## Technical details
@@ -421,10 +400,6 @@ helm uninstall supply-chain-perspective --namespace supply-chain-dashboard
 
 ```
 app/
-├── supply-chain-perspective/   # OpenShift Console dynamic plugin (Supply Chain perspective)
-│   ├── charts/openshift-console-plugin/   # Helm chart (ConsolePlugin + operator patch)
-│   ├── src/components/         # Dashboard, simulations, knowledge bases UI
-│   └── Containerfile           # Plugin image build
 ├── backend/
 │   ├── api/                        # Python Flask API (runtime image)
 │   │   ├── main.py                 # App entry point and route definitions
@@ -477,11 +452,11 @@ app/
 | `POST` | `/api/v1/chat` | RAG-augmented chat with the LLM |
 | `GET` | `/api/v1/vector_stores` | List Llama Stack vector stores (chat picker) |
 | `GET` / `POST` | `/api/v1/knowledge-bases` | List or upload UI-managed knowledge bases |
-| `GET` / `POST` | `/api/v1/simulations` | List or create named simulation records (perspective) |
+| `GET` / `POST` | `/api/v1/simulations` | List or create named simulation records |
 
 ### Environment variables
 
-**Helm (`helm/values.yaml`)** — the only value you must set before deploy is `llm-service.secret.hf_token` (Hugging Face token for gated models). Other keys below are set by the chart or optional overrides.
+**Helm (`helm/secrets.yaml`)** — for the default MaaS path, set `global.models.external-model.apiToken` to a literal token (copy from `secrets.example.yaml`). Do not use `${env.VAR}` — the llama-stack init script will hit bash `bad substitution`. A Hugging Face token (`llm-service.secret.hf_token` or Secret `huggingface-secret` / `HF_TOKEN`) is only required when you re-enable local `llm-service`. Other keys below are set by the chart or optional overrides.
 
 **Backend**
 
@@ -512,20 +487,13 @@ app/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BACKEND_UPSTREAM` | nginx `/api` proxy target (set on the frontend pod at runtime) | `http://<release>-backend:5001` |
-| `VITE_DEV_API_PROXY_TARGET` | Local `npm run dev` proxy target for `/api` | `http://127.0.0.1:5001` |
-
-**Perspective plugin (build-time)**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SUPPLY_CHAIN_API_BASE_URL` | Full backend origin baked into the plugin bundle (`make` passes `PERSPECTIVE_API_BASE_URL`) | *(empty — use console plugin proxy at `/api/plugins/supply-chain-perspective/`)* |
-| `SUPPLY_CHAIN_DEV_API_PROXY_TARGET` | Local `yarn start` webpack dev proxy target | `http://127.0.0.1:5001` |
+| `VITE_DEV_API_PROXY_TARGET` | Local `pnpm dev` proxy target for `/api` | `http://127.0.0.1:5001` |
 
 ### Frontend dependencies
 
-- **React 19** + **Vite 7**
-- **Chart.js 4** + `react-chartjs-2` — demand and revenue charts
-- **Leaflet 1.9** + `react-leaflet 5` — logistics map
+- **React 19** + **Vite 7** + **pnpm**
+- **Leaflet 1.9** + `react-leaflet 5` — impact map
+- **react-markdown** — streaming chat / impact answers
 
 ### Backend dependencies
 
@@ -534,37 +502,10 @@ app/
 - **LangChain** (`langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-openai`, `langchain-postgres`) — document loading, splitting, embedding, PGVector integration
 - **psycopg[binary]** — PostgreSQL driver
 
-### Perspective dependencies
-
-Build and runtime tooling (`app/supply-chain-perspective/`):
-
-- **Node.js 22** + **Yarn 4.13** — plugin bundle build (`yarn build` / `make build-perspective`)
-- **TypeScript 5** + **Webpack 5** — production bundle and module federation
-- **UBI 9** `nodejs-22` and `nginx-120` images — multi-stage `Containerfile` (plugin served on port **9001** with OpenShift service CA TLS)
-
-Console and UI (aligned with OpenShift Console **4.21** dynamic plugin SDK):
-
-- **React 17** + **react-dom 17** — required by `@openshift-console/dynamic-plugin-sdk`
-- **@openshift-console/dynamic-plugin-sdk** `4.21-latest` + **@openshift-console/dynamic-plugin-sdk-webpack** — console plugin API and webpack integration
-- **@console/pluginAPI** `^4.21.0` — declared console plugin dependency in `package.json`
-- **PatternFly 6** (`@patternfly/react-core`, `react-icons`, `react-table`) — console-consistent UI
-- **react-router-dom** 5.3.x + **react-router-dom-v5-compat** — routing inside the perspective
-- **react-i18next** + **i18next** — translations (`plugin__supply-chain-perspective` namespace)
-
-Dashboard features (shared with the standalone frontend):
-
-- **Chart.js 4** + **react-chartjs-2** — demand and revenue charts
-- **Leaflet 1.9** + **react-leaflet 3** — logistics map
-- **react-markdown** — RAG chat responses in the dashboard
-
-Runtime dependency:
-
-- **Backend API** — same Flask endpoints as the main application (`/api/v1/state`, `/api/v1/simulate`, `/api/v1/chat`, etc.)
-
 ## Tags
 
 - **Title**: AI Supply Chain Agent
-- **Description**: AI-powered supply chain dashboard with RAG chatbot, disruption simulation, and real-time logistics monitoring on OpenShift AI.
+- **Description**: AI-powered supply chain impact simulation with RAG chatbot and knowledge-base management on OpenShift AI.
 - **Industry**: Manufacturing / Logistics
 - **Product**: OpenShift AI, OpenShift
 - **Use case**: AI agents, RAG, supply chain intelligence

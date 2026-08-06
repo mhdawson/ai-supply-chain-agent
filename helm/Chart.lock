@@ -8,5 +8,8 @@ dependencies:
 - name: llm-service
   repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
   version: 0.5.9
-digest: sha256:6deb8bd1813533b392b4f361ef3b9f05f2da97e39413138b73d1f59a2b7aea3c
-generated: "2026-06-10T11:52:51.086139-05:00"
+- name: general-simulation
+  repository: file://../../general-simulation/deploy/helm/general-simulation
+  version: 0.1.0
+digest: sha256:5059b714c576c189860994de9070c1289759121e088838b274ed403c69f8c87f
+generated: "2026-08-05T16:41:58.403644-04:00"

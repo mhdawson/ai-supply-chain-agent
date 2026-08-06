@@ -1,8 +1,8 @@
 apiVersion: v2
-name: example
-description: Example umbrella chart with pgvector and llama-stack
+name: supply-chain-agent
+description: AI Supply Chain Agent — demo dashboard with pgvector and Llama Stack
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.1.0"
 
 dependencies:
@@ -18,3 +18,10 @@ dependencies:
     version: 0.5.9
     repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
     condition: llm-service.enabled
+  # Sibling checkout under the same parent directory (forks/). Switch back to
+  # https://robertsandoval.github.io/general-simulation after publishing a
+  # chart that includes api.waitFor + lifespan DB retries.
+  - name: general-simulation
+    version: 0.1.0
+    repository: "file://../../general-simulation/deploy/helm/general-simulation"
+    condition: general-simulation.enabled

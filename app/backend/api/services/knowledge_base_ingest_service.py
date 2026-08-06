@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
 from typing import Any
 
+import openai
 from clients.llama_stack_client import LlamaStackClient
-from services.knowledge_bases_store import append_record, new_record_stub
+from repositories.knowledge_base_repository import KnowledgeBaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,12 @@ _ALLOWED_SUFFIXES = (".txt", ".md", ".markdown", ".pdf")
 _MAX_FILE_BYTES = 15 * 1024 * 1024
 _MAX_FILES = 32
 
+# LlamaStack vector store names have a 48-character limit.
+_MAX_VECTOR_STORE_NAME_LENGTH = 48
+
 
 def _vector_store_slug(display_name: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", (display_name or "").strip())[:48].strip("-_.")
-    
+    slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", (display_name or "").strip())[:_MAX_VECTOR_STORE_NAME_LENGTH].strip("-_.")
     return slug
 
 
@@ -27,11 +29,14 @@ def ingest_uploaded_files(
     llama: LlamaStackClient,
     display_name: str,
     files: list[tuple[str, bytes]],
+    *,
+    repository: KnowledgeBaseRepository | None = None,
 ) -> dict[str, Any]:
     """Create a vector store, upload each allowed file, attach to the store, append catalog row.
 
     *files* is ``(original_filename, raw_bytes)`` pairs from multipart form uploads.
     """
+    repo = repository or KnowledgeBaseRepository()
     warnings: list[str] = []
     if not (display_name or "").strip():
         return {"ok": False, "error": "name is required"}
@@ -63,21 +68,28 @@ def ingest_uploaded_files(
     store_label = _vector_store_slug(display_name)
     try:
         vector_store_id = llama.create_vector_store(store_label)
-    except Exception as exc:
+    except (openai.APIError, RuntimeError) as exc:
         logger.exception("create_vector_store failed: %s", exc)
         return {"ok": False, "error": str(exc), "warnings": warnings}
 
     files_meta: list[dict[str, Any]] = []
-    for filename, content in prepared:
-        try:
+    try:
+        for filename, content in prepared:
             file_id = llama.upload_file_bytes(filename, content)
             llama.attach_file_to_vector_store(vector_store_id, file_id)
             files_meta.append({"filename": filename, "file_id": file_id, "bytes": len(content)})
-        except Exception as exc:
-            logger.warning("upload/attach failed for %s: %s", filename, exc)
-            warnings.append(f"failed: {filename}: {exc}")
+    except Exception as exc:
+        logger.exception("ingestion failed for store=%s; cleaning up", vector_store_id)
+        llama.delete_vector_store(vector_store_id)
+        return {
+            "ok": False,
+            "error": str(exc),
+            "vector_store_id": vector_store_id,
+        }
 
     if not files_meta:
+        logger.info("no files ingested for store=%s; cleaning up", vector_store_id)
+        llama.delete_vector_store(vector_store_id)
         return {
             "ok": False,
             "error": "vector store was created but no files were ingested",
@@ -85,12 +97,11 @@ def ingest_uploaded_files(
             "warnings": warnings,
         }
 
-    record = new_record_stub(
+    record = repo.append_upload(
         name=display_name.strip(),
         vector_store_id=vector_store_id,
         files_meta=files_meta,
     )
-    append_record(record)
 
     return {
         "ok": True,
