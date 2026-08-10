@@ -4,8 +4,6 @@ import { ImpactQueryPanel } from "./ImpactQueryPanel";
 import { ImpactResultsPanel } from "./ImpactResultsPanel";
 import { useImpactSimulation } from "../hooks/useImpactSimulation";
 
-export { DEFAULT_GEOJSON_LIMIT } from "../hooks/useImpactSimulation";
-
 export function ImpactSimulationPage({
   initialScenarioId = "",
   onScenarioChange,
@@ -27,6 +25,8 @@ export function ImpactSimulationPage({
         scenariosError={sim.scenariosError}
         scenarioId={sim.scenarioId}
         onChangeScenarioId={sim.handleChangeScenarioId}
+        mapMode={sim.mapMode}
+        onChangeMapMode={sim.handleMapModeChange}
         question={sim.question}
         onChangeQuestion={sim.setQuestion}
         onRunQuery={sim.handleRunQuery}
@@ -37,7 +37,9 @@ export function ImpactSimulationPage({
 
       <section className="center-content">
         <ImpactMapPanel
+          title={sim.mapTitle}
           features={sim.collection.features}
+          focusBbox={sim.focusBbox}
           highlightedIds={sim.highlightedIds}
           reroutes={sim.reroutes}
           focusedEntityId={sim.focusedEntityId}

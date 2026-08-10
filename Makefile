@@ -96,6 +96,11 @@ help:
 	@echo "    ingest-logs        Tail logs from the most recent ingest Job pod"
 	@echo "    ingest-status      Show the status of the ingest Job"
 	@echo ""
+	@echo "  Gen-sim demo data:"
+	@echo "    seed               Demo seed then live OpenSky (seed-gen-sim + seed-opensky-live)"
+	@echo "    seed-gen-sim       Port-forward Neo4j+Postgres, pull secrets, run seed_demo.py"
+	@echo "    seed-opensky-live  Pull live OpenSky on laptop → upsert into cluster PG+Neo4j"
+	@echo ""
 	@echo "  Utilities:"
 	@echo "    login              Log in to the container registry via podman"
 	@echo "    oc-status          Show deployed pod and service status"
@@ -107,6 +112,9 @@ help:
 	@echo "    INGEST_TAG         $(INGEST_TAG)"
 	@echo "    FRONTEND_TAG       $(FRONTEND_TAG)"
 	@echo "    NAMESPACE          $(NAMESPACE)"
+	@echo "    GEN_SIM_NAMESPACE  (optional) OpenShift ns with gen-sim postgres+neo4j"
+	@echo "    GENERAL_SIM_DIR    $(GENERAL_SIM_DIR)"
+	@echo "    OPENSKY_MAX        $(OPENSKY_MAX)  (seed-opensky-live cap; 0=unlimited)"
 	@echo "    HELM_RELEASE       $(HELM_RELEASE)"
 	@echo "    VALUES_FILE        $(VALUES_FILE)  (set secrets in helm/secrets.yaml — see secrets.example.yaml)"
 	@echo ""
@@ -252,7 +260,6 @@ MYPY_BACKEND_TARGETS ?= \
 	app/backend/api/app_factory.py \
 	app/backend/api/main.py \
 	app/backend/api/errors.py \
-	app/backend/api/clients/interfaces.py \
 	app/backend/api/clients/chat_completion_client.py \
 	app/backend/api/clients/tool_loop_orchestrator.py \
 	app/backend/api/clients/llama_vector_store_admin.py \
@@ -260,7 +267,6 @@ MYPY_BACKEND_TARGETS ?= \
 	app/backend/api/repositories \
 	app/backend/api/services/guardrail_policy.py \
 	app/backend/api/services/rag_context_provider.py \
-	app/backend/api/services/flight_tracking_service.py \
 	app/backend/api/services/readiness_service.py \
 	app/backend/api/routes
 
@@ -441,8 +447,8 @@ oc-status:
 # ============================================================
 
 # Run the ingestion Job as a one-off oc run (no Helm required).
-# Override INGEST_STRATEGY=llamastack to use the LlamaStack-native pipeline.
-INGEST_STRATEGY ?= langchain
+# Default matches helm/values.yaml ingest.strategy; override to langchain for PGVector.
+INGEST_STRATEGY ?= llamastack
 
 .PHONY: ingest
 ingest:
@@ -478,6 +484,36 @@ ingest-status:
 	@echo ""
 	@echo ">>> Ingest Job events:"
 	oc describe job $(HELM_RELEASE)-ingest -n $(NAMESPACE) | tail -20
+
+# ============================================================
+# Gen-sim demo seed (laptop → OpenShift Neo4j + Postgres)
+# ============================================================
+# Requires a local checkout of general-simulation (sibling by default) and oc
+# login. Pulls neo4j-auth + postgres-credentials from the cluster.
+GENERAL_SIM_DIR ?= $(CURDIR)/../general-simulation
+GEN_SIM_NAMESPACE ?=
+OPENSKY_MAX ?= 2000
+
+.PHONY: seed-gen-sim
+seed-gen-sim:
+	@echo ">>> Seeding gen-sim demo data from laptop (port-forward + cluster secrets)"
+	NAMESPACE=$(NAMESPACE) \
+	GEN_SIM_NAMESPACE=$(GEN_SIM_NAMESPACE) \
+	GENERAL_SIM_DIR=$(GENERAL_SIM_DIR) \
+	./scripts/seed-gen-sim-demo.sh
+
+.PHONY: seed-opensky-live
+seed-opensky-live:
+	@echo ">>> Pulling live OpenSky on laptop → cluster Postgres + Neo4j"
+	NAMESPACE=$(NAMESPACE) \
+	GEN_SIM_NAMESPACE=$(GEN_SIM_NAMESPACE) \
+	GENERAL_SIM_DIR=$(GENERAL_SIM_DIR) \
+	OPENSKY_MAX=$(OPENSKY_MAX) \
+	./scripts/seed-opensky-live.sh
+
+.PHONY: seed
+seed: seed-gen-sim seed-opensky-live
+	@echo ">>> seed complete (demo scenarios/maritime + live OpenSky flights)"
 
 # ============================================================
 # Quality gate

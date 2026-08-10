@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
-vi.mock("./services/dashboardService", () => ({
+vi.mock("./services/chatService", () => ({
   getVectorStores: vi.fn(() => Promise.resolve({ vector_stores: [] })),
   sendChatMessageStream: vi.fn(),
 }));
@@ -30,8 +30,12 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /impact map/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /live flights/i })).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: "Live Flights" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByRole("button", { name: /^simulation$/i })).toHaveClass(
       "dashboard-nav-btn--active",
     );

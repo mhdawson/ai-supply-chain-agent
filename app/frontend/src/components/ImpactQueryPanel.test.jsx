@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_IMPACT_QUESTION, ImpactQueryPanel } from "./ImpactQueryPanel";
+import { DEFAULT_IMPACT_QUESTION } from "../services/presetScenarioIds";
+import { ImpactQueryPanel } from "./ImpactQueryPanel";
 
 describe("ImpactQueryPanel", () => {
   it("renders scenario buttons, question, and run button", () => {
@@ -9,6 +10,8 @@ describe("ImpactQueryPanel", () => {
       <ImpactQueryPanel
         scenarios={["opensky-uk-closure-001"]}
         scenarioId="opensky-uk-closure-001"
+        mapMode="live"
+        onChangeMapMode={vi.fn()}
         question={DEFAULT_IMPACT_QUESTION}
         onChangeScenarioId={vi.fn()}
         onChangeQuestion={vi.fn()}
@@ -16,12 +19,34 @@ describe("ImpactQueryPanel", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: /Impact Query/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live Flights" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "UK Airspace Closure" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     expect(screen.getByLabelText(/Question/i)).toHaveValue(DEFAULT_IMPACT_QUESTION);
     expect(screen.getByRole("button", { name: /Run impact query/i })).toBeEnabled();
+  });
+
+  it("calls onChangeMapMode when Live Flights is clicked", async () => {
+    const onChangeMapMode = vi.fn();
+    render(
+      <ImpactQueryPanel
+        scenarios={["opensky-uk-closure-001"]}
+        scenarioId="opensky-uk-closure-001"
+        mapMode="scenario"
+        onChangeMapMode={onChangeMapMode}
+        question="q"
+        onChangeScenarioId={vi.fn()}
+        onChangeQuestion={vi.fn()}
+        onRunQuery={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Live Flights" }));
+    expect(onChangeMapMode).toHaveBeenCalledWith("live");
   });
 
   it("calls onChangeScenarioId when a scenario button is clicked", async () => {
