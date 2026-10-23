@@ -135,9 +135,10 @@ help:
 	@echo "    ingest-status      Show the status of the ingest Job"
 	@echo ""
 	@echo "  Gen-sim demo data:"
-	@echo "    seed               Demo seed, then YAML overlay and live OpenSky (seed-gen-sim + seed-opensky)"
+	@echo "    seed               Demo seed, then values-driven YAML + OpenSky (seed-opensky)"
 	@echo "    seed-gen-sim       Port-forward Neo4j+Postgres, pull secrets, run seed_demo.py"
-	@echo "    seed-opensky       Import seed.networkFiles and optional OpenSky flights from VALUES_FILE"
+	@echo "    seed-customer-data Merge customer network YAML (local or .example) onto base demo"
+	@echo "    seed-opensky       Import seed.networkFiles + live OpenSky from VALUES_FILE"
 	@echo ""
 	@echo "  Full install:"
 	@echo "    install-full       install + ingest + seed (NAMESPACE, MODEL_ID, MODEL_URL, API_KEY)"
@@ -265,6 +266,11 @@ HELM_TEST ?= make helm-test
 test: test-backend test-frontend test-helm
 	@echo ">>> All tests passed."
 
+.PHONY: test-backend-deps
+test-backend-deps:
+	@echo ">>> Installing backend test dependencies (requirements-dev.txt)..."
+	python -m pip install -r app/backend/requirements-dev.txt
+
 .PHONY: test-backend
 test-backend:
 	@echo ">>> Running backend tests..."
@@ -343,31 +349,37 @@ helm-deps:
 	helm dependency update $(HELM_CHART)
 	@$(MAKE) --no-print-directory helm-patch-scc
 
-# Workaround for general-simulation creating ClusterRoleBindings (cluster-scoped)
-# to grant the anyuid SCC, which forces every installer to have cluster-admin.
-# Patches them to namespace-scoped RoleBindings referencing the same
-# ClusterRole (system:openshift:scc:anyuid) — namespace `admin` is sufficient
-# for that, matching how `oc adm policy add-scc-to-user` works. Remove this
-# target and the call to it in helm-deps once general-simulation ships the fix
-# upstream.
+# Compatibility shim: older general-simulation charts used ClusterRoleBindings
+# (cluster-scoped) for the anyuid SCC. Current upstream already ships
+# namespace-scoped RoleBindings — skip when already patched/fixed.
 .PHONY: helm-patch-scc
 helm-patch-scc:
-	@echo ">>> Patching general-simulation SCC bindings (ClusterRoleBinding -> RoleBinding; avoids needing cluster-admin)"
-# 	@set -eu; \
-# 	TGZ=$$(ls $(HELM_CHART)/charts/general-simulation-*.tgz 2>/dev/null | head -1); \
-# 	if [ -z "$$TGZ" ]; then echo "  (no general-simulation chart found — skipping)"; exit 0; fi; \
-# 	TMPDIR=$$(mktemp -d); \
-# 	COPYFILE_DISABLE=1 tar xzf "$$TGZ" -C "$$TMPDIR"; \
-# 	FOUND=0; \
-# 	for f in $$(find "$$TMPDIR/general-simulation/templates" -name 'scc-binding.yaml' -type f | sort); do \
-# 	  FOUND=1; \
-# 	  grep -q '^kind: ClusterRoleBinding$$' "$$f" || { echo "ERROR: 'kind: ClusterRoleBinding' not found in $$f (chart content changed — patch needs updating)"; rm -rf "$$TMPDIR"; exit 1; }; \
-# 	  sed -i '' 's/^kind: ClusterRoleBinding$$/kind: RoleBinding/' "$$f" 2>/dev/null || sed -i 's/^kind: ClusterRoleBinding$$/kind: RoleBinding/' "$$f"; \
-# 	  echo "  patched $$f"; \
-# 	done; \
-# 	if [ "$$FOUND" -eq 0 ]; then echo "ERROR: no scc-binding.yaml templates found under general-simulation (chart layout changed?)"; rm -rf "$$TMPDIR"; exit 1; fi; \
-# 	COPYFILE_DISABLE=1 tar czf "$$TGZ" -C "$$TMPDIR" general-simulation; \
-# 	rm -rf "$$TMPDIR"
+	@echo ">>> Checking general-simulation SCC bindings (ClusterRoleBinding -> RoleBinding if needed)"
+	@set -eu; \
+	TGZ=$$(ls $(HELM_CHART)/charts/general-simulation-*.tgz 2>/dev/null | head -1); \
+	if [ -z "$$TGZ" ]; then echo "  (no general-simulation chart found — skipping)"; exit 0; fi; \
+	TMPDIR=$$(mktemp -d); \
+	COPYFILE_DISABLE=1 tar xzf "$$TGZ" -C "$$TMPDIR"; \
+	FOUND=0; \
+	PATCHED=0; \
+	for f in $$(find "$$TMPDIR/general-simulation/templates" -name 'scc-binding.yaml' -type f | sort); do \
+	  FOUND=1; \
+	  if grep -q '^kind: RoleBinding$$' "$$f"; then \
+	    echo "  already RoleBinding — $$f (skipping)"; \
+	  elif grep -q '^kind: ClusterRoleBinding$$' "$$f"; then \
+	    sed -i '' 's/^kind: ClusterRoleBinding$$/kind: RoleBinding/' "$$f" 2>/dev/null || sed -i 's/^kind: ClusterRoleBinding$$/kind: RoleBinding/' "$$f"; \
+	    echo "  patched $$f"; \
+	    PATCHED=1; \
+	  else \
+	    echo "ERROR: neither RoleBinding nor ClusterRoleBinding found in $$f"; \
+	    rm -rf "$$TMPDIR"; exit 1; \
+	  fi; \
+	done; \
+	if [ "$$FOUND" -eq 0 ]; then echo "ERROR: no scc-binding.yaml templates found under general-simulation (chart layout changed?)"; rm -rf "$$TMPDIR"; exit 1; fi; \
+	if [ "$$PATCHED" -eq 1 ]; then \
+	  COPYFILE_DISABLE=1 tar czf "$$TGZ" -C "$$TMPDIR" general-simulation; \
+	fi; \
+	rm -rf "$$TMPDIR"
 
 .PHONY: helm-deps-local
 helm-deps-local: helm-deps
@@ -697,13 +709,26 @@ seed-opensky:
 	VALUES_FILE=$(VALUES_FILE) \
 	./scripts/seed-opensky.sh
 
+# Optional override. When unset, seed-customer-data.sh uses
+# data/supply-chain-network.yaml if present, else the committed .example.yaml.
+NETWORK_YAML ?=
+
+.PHONY: seed-customer-data
+seed-customer-data:
+	@echo ">>> Merging customer supply-chain network YAML (run seed-gen-sim first)"
+	NAMESPACE=$(NAMESPACE) \
+	GEN_SIM_NAMESPACE=$(GEN_SIM_NAMESPACE) \
+	GENERAL_SIM_DIR=$(GENERAL_SIM_DIR) \
+	$(if $(NETWORK_YAML),NETWORK_YAML=$(NETWORK_YAML)) \
+	./scripts/seed-customer-data.sh
+
 .PHONY: seed
 seed: seed-gen-sim seed-opensky
-	@echo ">>> seed complete (demo scenarios/maritime + YAML overlay + live OpenSky flights)"
+	@echo ">>> seed complete (demo + values-driven YAML overlay + live OpenSky)"
 
 .PHONY: submodule-init
 submodule-init:
-	@echo ">>> Initializing git submodules (general-simulation @ development)"
+	@echo ">>> Initializing git submodules (general-simulation @ main)"
 	git submodule update --init --recursive
 
 # ============================================================

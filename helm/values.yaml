@@ -25,8 +25,8 @@ general-simulation:
     models:
       external-model:
         enabled: true
-        id: external-model/llama-scout-17b
-        url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+        id: external-model/Qwen3.6-35B-A3B
+        url: https://litemaas.rhoai.rh-aiservices-bu.com/v1
         apiToken: ""
   openshift:
     neo4j:
@@ -104,7 +104,7 @@ general-simulation:
       apiKey: unused
     models:
       # Stack model id = <providerKey>/<model.id> (see global.models.external-model above).
-      generation: external-model/llama-scout-17b
+      generation: external-model/Qwen3.6-35B-A3B
       # Llama Stack inline embedder — full stack model id (see GET /v1/models on llamastack).
       embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5
       embeddingDimension: "768"
@@ -115,7 +115,7 @@ general-simulation:
       host: postgres
     neo4j:
       password: password
-  # Live OpenSky CronJob (opensky-network.org). Keep disabled on AWS/hyperscaler
+  # Live OpenSky CronJob (opensky-network.org). Keep disabled on AWS/hyper-scaler
   # clusters: OpenSky drops those source IPs at TCP (documented; they refuse AI
   # dashboard allowlists). Cluster NetworkPolicy / EgressFirewall cannot fix it.
   # Seed offline demo data with general-simulation scripts/seed_demo.py instead.
@@ -126,7 +126,7 @@ general-simulation:
       enabled: false
     models:
       generation: external-model/gpt-oss-120b
-      embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5
+      embedding: nomic-ai/nomic-embed-text-v1.5
       embeddingDimension: "768"
     postgres:
       user: sim
@@ -145,6 +145,10 @@ backend:
     name: ai-supply-chain-agent-backend
     tag: ""
     pullPolicy: Always
+  # Empty on OpenShift (restricted SCC assigns UID). Kind may set runAsUser
+  # (busybox wait-for-llamastack is root without a numeric UID).
+  podSecurityContext: {}
+  containerSecurityContext: {}
   service:
     port: 5001
   route:
@@ -166,6 +170,9 @@ ingest:
   # Set to true to run the knowledge-base ingestion Job on every
   # helm install / upgrade.
   enabled: true
+  # Empty on OpenShift. Kind may set runAsUser for busybox wait init.
+  podSecurityContext: {}
+  containerSecurityContext: {}
   # Hook deletion policy on the post-install/post-upgrade Job. Leave empty to
   # keep Completed/Failed Jobs (and their Pods) so you can read logs after a
   # failed run; set to "before-hook-creation" to auto-delete the prior Job.

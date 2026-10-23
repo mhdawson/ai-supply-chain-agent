@@ -1,5 +1,7 @@
 {{- if .Values.backend.enabled }}
 {{- $genSim := index .Values "general-simulation" }}
+{{- $llamaStack := index $genSim "llama-stack" | default dict }}
+{{- $waitForLlamaStack := $llamaStack.enabled | default false }}
 {{- $stackModel := required "general-simulation.api.models.generation is required (gen-sim owns model selection)" $genSim.api.models.generation }}
 apiVersion: apps/v1
 kind: Deployment
@@ -23,12 +25,42 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        {{- with .Values.backend.podSecurityContext }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if $waitForLlamaStack }}
+      initContainers:
+        # Only when gen-sim llama-stack is enabled (Kind leaves it off).
+        # Gen-sim owns Postgres readiness for its own API pod.
+        - name: wait-for-llamastack
+          image: quay.io/quay/busybox:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            {{- with .Values.backend.containerSecurityContext }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for llamastack at {{ .Values.backend.env.LLAMA_STACK_URL }}/v1/models ..."
+              until wget -qO- {{ .Values.backend.env.LLAMA_STACK_URL }}/v1/models > /dev/null 2>&1; do
+                echo "  llamastack not ready — retrying in 5s"
+                sleep 5
+              done
+              echo "llamastack is up."
+      {{- end }}
       containers:
         - name: backend
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+            {{- with .Values.backend.containerSecurityContext }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           image: {{ include "supply-chain.containerImage" (dict "image" .Values.backend.image "global" .Values.global) | quote }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           ports:
